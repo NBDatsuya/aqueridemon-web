@@ -1,0 +1,98 @@
+<svg width="800" height="640" viewBox="0 0 800 640" xmlns="http://www.w3.org/2000/svg" font-family="'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', sans-serif">
+  <rect width="800" height="640" fill="#f1efe2"/>
+  <defs>
+    <marker id="bossPathArrow" markerWidth="10" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#d97706"/>
+    </marker>
+    <marker id="northArrow" markerWidth="8" markerHeight="7" refX="5.5" refY="3.5" orient="auto">
+      <path d="M0,0 L6,3.5 L0,7 Z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <!-- 北：后山/树林 -->
+  <text x="400" y="38" text-anchor="middle" fill="#1f2937" font-size="16" font-weight="bold">后山/树林</text>
+  <text x="400" y="58" text-anchor="middle" fill="#b45309" font-size="13">（Boss出现方向）</text>
+  <ellipse cx="400" cy="115" rx="190" ry="55" fill="#cfdec0"/>
+  <circle cx="280" cy="132" r="16" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="280" cy="132" r="8" fill="#5f8f47"/>
+  <circle cx="322" cy="106" r="20" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="322" cy="106" r="10" fill="#5f8f47"/>
+  <circle cx="366" cy="126" r="15" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="366" cy="126" r="7" fill="#5f8f47"/>
+  <circle cx="434" cy="121" r="18" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="434" cy="121" r="9" fill="#5f8f47"/>
+  <circle cx="478" cy="101" r="20" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="478" cy="101" r="10" fill="#5f8f47"/>
+  <circle cx="524" cy="131" r="15" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="524" cy="131" r="7" fill="#5f8f47"/>
+  <circle cx="302" cy="152" r="12" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="302" cy="152" r="6" fill="#5f8f47"/>
+  <circle cx="462" cy="150" r="12" fill="#4e7a3a" stroke="#3a5c2b" stroke-width="1.5"/>
+  <circle cx="462" cy="150" r="6" fill="#5f8f47"/>
+
+  <!-- 北侧围栏（中间为Boss突破口） -->
+  <line x1="230" y1="175" x2="368" y2="175" stroke="#8d7b65" stroke-width="3" stroke-dasharray="8 5"/>
+  <line x1="432" y1="175" x2="570" y2="175" stroke="#8d7b65" stroke-width="3" stroke-dasharray="8 5"/>
+  <line x1="372" y1="166" x2="414" y2="184" stroke="#7a5c3f" stroke-width="4" stroke-linecap="round"/>
+  <line x1="384" y1="190" x2="420" y2="170" stroke="#7a5c3f" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- 足球场绿茵场 -->
+  <rect x="220" y="205" width="360" height="250" fill="#6aa65e" stroke="#4d7c0f" stroke-width="2"/>
+  <rect x="280" y="205" width="60" height="250" fill="#74b268"/>
+  <rect x="400" y="205" width="60" height="250" fill="#74b268"/>
+  <rect x="520" y="205" width="60" height="250" fill="#74b268"/>
+  <rect x="232" y="217" width="336" height="226" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.9"/>
+  <line x1="400" y1="217" x2="400" y2="443" stroke="#ffffff" stroke-width="2" opacity="0.9"/>
+  <rect x="232" y="272" width="52" height="116" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.9"/>
+  <rect x="516" y="272" width="52" height="116" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.9"/>
+  <rect x="224" y="300" width="8" height="60" fill="#ffffff" opacity="0.9"/>
+  <rect x="568" y="300" width="8" height="60" fill="#ffffff" opacity="0.9"/>
+  <circle cx="400" cy="330" r="3" fill="#ffffff"/>
+  <!-- 中央停机坪（中圈，黄色H标记） -->
+  <circle cx="400" cy="330" r="30" fill="none" stroke="#facc15" stroke-width="2.5" stroke-dasharray="6 5"/>
+  <text x="400" y="338" text-anchor="middle" fill="#facc15" font-size="20" font-weight="bold">H</text>
+  <text x="400" y="374" text-anchor="middle" fill="#fef3c7" font-size="10">停机坪</text>
+
+  <!-- Boss进入路线 -->
+  <line x1="400" y1="98" x2="400" y2="196" stroke="#d97706" stroke-width="3" stroke-dasharray="8 5" marker-end="url(#bossPathArrow)"/>
+
+  <!-- 西：教学楼 -->
+  <line x1="150" y1="350" x2="218" y2="341" stroke="#9aa0a6" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <rect x="62" y="270" width="88" height="160" fill="#d8d2c6" stroke="#8a8071" stroke-width="1.5"/>
+  <line x1="70" y1="310" x2="142" y2="310" stroke="#b9b1a2" stroke-width="1"/>
+  <line x1="70" y1="350" x2="142" y2="350" stroke="#b9b1a2" stroke-width="1"/>
+  <line x1="70" y1="390" x2="142" y2="390" stroke="#b9b1a2" stroke-width="1"/>
+  <text x="106" y="256" text-anchor="middle" fill="#1f2937" font-size="15" font-weight="bold">教学楼</text>
+  <text x="106" y="452" text-anchor="middle" fill="#6b7280" font-size="12">（西侧）</text>
+
+  <!-- 东：体育馆 -->
+  <line x1="642" y1="350" x2="582" y2="341" stroke="#9aa0a6" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <rect x="650" y="280" width="100" height="150" rx="26" fill="#cdd9e6" stroke="#7c8ba1" stroke-width="1.5"/>
+  <path d="M665,350 Q700,318 735,350" fill="none" stroke="#a9b8ca" stroke-width="1.5"/>
+  <text x="700" y="266" text-anchor="middle" fill="#1f2937" font-size="15" font-weight="bold">体育馆</text>
+  <text x="700" y="452" text-anchor="middle" fill="#6b7280" font-size="12">（东侧）</text>
+
+  <!-- 南：校门/围墙（封锁） -->
+  <line x1="250" y1="520" x2="550" y2="520" stroke="#9aa0a6" stroke-width="6"/>
+  <rect x="248" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="298" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="348" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="444" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="494" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="544" y="514" width="8" height="12" fill="#6b7280"/>
+  <rect x="378" y="510" width="8" height="18" fill="#4b5563"/>
+  <rect x="414" y="510" width="8" height="18" fill="#4b5563"/>
+  <line x1="380" y1="514" x2="420" y2="534" stroke="#dc2626" stroke-width="2"/>
+  <line x1="420" y1="514" x2="380" y2="534" stroke="#dc2626" stroke-width="2"/>
+  <text x="400" y="553" text-anchor="middle" fill="#dc2626" font-size="11" font-weight="bold">已封锁</text>
+  <text x="400" y="586" text-anchor="middle" fill="#1f2937" font-size="15" font-weight="bold">校门/围墙</text>
+  <text x="400" y="606" text-anchor="middle" fill="#6b7280" font-size="12">（南侧，封锁）</text>
+
+  <!-- 指北针 -->
+  <line x1="735" y1="74" x2="735" y2="46" stroke="#475569" stroke-width="2" marker-end="url(#northArrow)"/>
+  <text x="735" y="92" text-anchor="middle" fill="#475569" font-size="13">北</text>
+
+  <!-- 图例 -->
+  <line x1="60" y1="600" x2="100" y2="600" stroke="#d97706" stroke-width="3" stroke-dasharray="8 5"/>
+  <text x="110" y="604" fill="#b45309" font-size="12">Boss进入路线</text>
+</svg>
