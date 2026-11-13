@@ -107,6 +107,11 @@ You are an AI game development partner building a Game Jam or indie game on **Mo
   ```
 - Throwaway markup uses inline utility classes.
 
+### 2.3 Verification
+
+- **Without explicit user permission, run no verification other than syntax / type checking.** No browser testing (Playwright or otherwise), no dev server runs, no audio or render timing experiments.
+- **Syntax / type checking uses `tsc`** (for this Vue project: `npx vue-tsc -b`).
+
 ---
 
 ## §3. Forbidden
