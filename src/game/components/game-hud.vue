@@ -109,21 +109,10 @@
       />
     </div>
 
-    <!-- 准星指向队友：信息卡 -->
+    <!-- 准星指向队友：一行蓝字 -->
     <Transition name="aim">
       <div v-if="aimTarget && showCrosshair" :key="aimTarget.id" class="game-hud__aim">
-        <div class="game-hud__aim-head">
-          <span class="game-hud__aim-dot" :style="{ background: aimTarget.color }" />
-          <span class="game-hud__aim-name">{{ aimTarget.name }}</span>
-          <span class="game-hud__aim-dist">{{ aimTarget.distance }}m</span>
-        </div>
-        <div class="game-hud__bar game-hud__bar--thin">
-          <div class="game-hud__bar-fill game-hud__bar-fill--ally" :style="{ width: `${hpPercent(aimTarget.hp)}%` }" />
-        </div>
-        <div class="game-hud__aim-info">
-          <span>{{ aimStateText(aimTarget) }}</span>
-          <span v-if="aimTarget.weapon">{{ aimTarget.weapon }}</span>
-        </div>
+        Name: {{ aimTarget.name }} HP: {{ Math.round(hpPercent(aimTarget.hp)) }}%
       </div>
     </Transition>
 
@@ -193,7 +182,7 @@
 import { computed } from 'vue'
 import { PLAYER, WAVES } from '../core/config'
 import { hud } from '../core/state'
-import type { HudAimTarget, HudSquadMember } from '../core/state'
+import type { HudSquadMember } from '../core/state'
 import { formatTime } from '../utils/math'
 
 const teammates = computed(() => hud.squad.filter((m) => !m.isPlayer))
@@ -232,14 +221,6 @@ function mateState(m: HudSquadMember): string {
   if (m.status === 'dead') return '阵亡'
   if (m.status === 'boarded') return '已登机'
   return `${m.hp}`
-}
-
-/** 指向信息卡的状态文案 */
-function aimStateText(t: HudAimTarget): string {
-  if (t.status === 'downed') return `倒地 ${t.downedTimer}s`
-  if (t.status === 'dead') return '阵亡'
-  if (t.status === 'boarded') return '已登机'
-  return `HP ${t.hp}`
 }
 </script>
 
@@ -610,36 +591,9 @@ function aimStateText(t: HudAimTarget): string {
     linear-gradient(-45deg, transparent 44%, #ef4444 44%, #ef4444 56%, transparent 56%);
 }
 
-/* ── 指向队友信息卡 ── */
+/* ── 指向队友：一行蓝字 ── */
 .game-hud__aim {
-  @apply font-hud absolute top-1/2 left-1/2 ml-10 -mt-7 flex w-44 flex-col gap-1 px-2.5 py-1.5;
-  background:
-    linear-gradient(180deg, rgb(12 28 52 / 0.85), rgb(3 10 24 / 0.9)) padding-box,
-    linear-gradient(180deg, rgb(125 211 252 / 0.7), rgb(56 189 248 / 0.2)) border-box;
-  border: 1px solid transparent;
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  box-shadow: 0 0 14px rgb(14 165 233 / 0.25);
-}
-
-.game-hud__aim-head {
-  @apply flex items-center gap-1.5 border-b border-sky-400/20 pb-1 text-sm;
-}
-
-.game-hud__aim-dot {
-  @apply inline-block h-2 w-2;
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-}
-
-.game-hud__aim-name {
-  @apply flex-1 truncate font-bold text-white;
-}
-
-.game-hud__aim-dist {
-  @apply text-xs font-semibold text-sky-300 tabular-nums;
-}
-
-.game-hud__aim-info {
-  @apply flex items-center justify-between text-[11px] font-semibold tracking-wide text-slate-300 tabular-nums;
+  @apply font-hud absolute top-1/2 left-1/2 ml-6 -translate-y-1/2 text-sm font-semibold whitespace-nowrap text-sky-400 tabular-nums;
 }
 
 .aim-enter-active,
