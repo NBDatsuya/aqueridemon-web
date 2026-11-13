@@ -33,8 +33,20 @@ export const PLAY_BOUNDS = { halfX: 57, halfZ: 43 } as const
 /** 中圈停机坪：半径 5m 内可登机 */
 export const PAD = { x: 0, z: 0, radius: 5 } as const
 
-/** 主控出生点与初始朝向（朝北，面向后山） */
-export const PLAYER_START = { x: 0, z: 8, yaw: Math.PI } as const
+/**
+ * 开局队形：小队 4 人按 SQUAD_ORDER 排成一排，面向北（-z）；
+ * 正前方一段距离是主武器箱排（见 WEAPON_CRATES），每人正对自己的两箱。
+ */
+export const SQUAD_START = {
+  /** 人员排所在横线 */
+  z: 14,
+  yaw: Math.PI,
+  /** SQUAD_ORDER 顺序的横向站位；主控在最左端，开局视野能看到整排队友 */
+  slots: [-9, -3, 3, 9],
+} as const
+
+/** 主控出生点与初始朝向（朝北，面向后山）：队形最左端 */
+export const PLAYER_START = { x: SQUAD_START.slots[0], z: SQUAD_START.z, yaw: SQUAD_START.yaw } as const
 
 /** 8 个刷新点：场地边缘外约 15-18m，每侧 2 个 */
 export const SPAWN_POINTS: readonly SpawnPoint[] = [
@@ -496,25 +508,30 @@ export const PREP_DURATION = 3
 
 /* ── 开局主武器箱 ── */
 
+/** 箱子排所在横线：在人员排（SQUAD_START.z）正前方一段距离，避开中圈停机坪 */
+const CRATE_ROW_Z = 7
+/** 同一人两箱的横向间距：紧挨着摆在一排里，不会被拆到排的两端 */
+const CRATE_PAIR_GAP = 2.8
+
 /**
  * 开局主武器箱（补充）：取代原来的菜单选枪。
- * 箱子一开始就摆在出生点周围的地面上，箱内主武器随机；每人最多开 perPerson 个，正好凑满主武器槽位。
+ * 箱子一开始就摆在开局队形正前方的一排地面上，箱内主武器随机；
+ * 每人只开正对自己的 perPerson 个，正好凑满主武器槽位。
  * TODO: 副武器（手枪一类）尚未实现，届时箱子与携带槽位要区分主 / 副武器。
  */
 export const WEAPON_CRATES = {
   /** 每名小队成员最多能开几个（= 主武器槽位数） */
   perPerson: 2,
-  /** 落点：散在小队出生点（0, 8）四周，避开中圈停机坪；数量 = 小队人数 × perPerson */
-  points: [
-    { x: -5, z: 6 },
-    { x: -3, z: 11 },
-    { x: -0.5, z: 13 },
-    { x: 2.5, z: 12 },
-    { x: 5, z: 9.5 },
-    { x: 5.5, z: 5.5 },
-    { x: 3, z: 6 },
-    { x: -3, z: 5.5 },
-  ],
+  rowZ: CRATE_ROW_Z,
+  /**
+   * 落点：与开局队形对齐的一排，由 SQUAD_START.slots 推导——第 i 对（points[2i]、points[2i+1]）
+   * 以 slots[i] 为中心，正对 SQUAD_ORDER[i]。每人只开正对自己的那两箱（AI 侧在
+   * findWeaponCrate 里限制），互不争抢。数量 = 小队人数 × perPerson。
+   */
+  points: SQUAD_START.slots.flatMap((cx) => [
+    { x: cx - CRATE_PAIR_GAP / 2, z: CRATE_ROW_Z },
+    { x: cx + CRATE_PAIR_GAP / 2, z: CRATE_ROW_Z },
+  ]),
 } as const
 
 /* ── Boss：阿奎尔巨兽 ── */

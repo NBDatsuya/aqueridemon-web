@@ -20,12 +20,13 @@ import {
   MAX_SHOT_DISTANCE,
   PAD,
   PLAYER,
-  PLAYER_START,
   PLAY_BOUNDS,
+  SQUAD_START,
   TEAMMATE_AI,
   TEAMMATE_TACTICS,
   VOICE,
   WEAPONS,
+  WEAPON_CRATES,
 } from '../core/config'
 import type {
   AirdropCrate,
@@ -462,12 +463,12 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
   function createMate(id: TeammateId, index: number): Mate {
     const def = TEAMMATE_AI[id]
     const actor = new CombatantBase(id, events)
-    // 开局手上没有枪：要先跑到主武器箱前开箱取枪
-    writeSlot(def, PLAYER_START.x, PLAYER_START.z, PLAYER_START.yaw, actor.position)
+    // 开局手上没有枪：4 人按 SQUAD_ORDER 排成一排（主控占 slots[0]），正对自己那两箱主武器
+    actor.position.set(SQUAD_START.slots[index + 1] ?? SQUAD_START.slots[0], 0, SQUAD_START.z)
 
     const rig = models.createCharacter(id)
     rig.root.position.copy(actor.position)
-    rig.root.rotation.y = PLAYER_START.yaw
+    rig.root.rotation.y = SQUAD_START.yaw
     scene.add(rig.root)
 
     const mid = (BOSS_RANGE_MIN + BOSS_RANGE_MAX) / 2
@@ -486,8 +487,8 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
       bossRange,
       side: def.followRight < 0 ? -1 : 1,
       weaponRig: null,
-      yaw: PLAYER_START.yaw,
-      moveYaw: PLAYER_START.yaw,
+      yaw: SQUAD_START.yaw,
+      moveYaw: SQUAD_START.yaw,
       hasMoveDir: false,
       animSpeed: 0,
       goal: 'follow',
@@ -530,7 +531,7 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
       threat: null,
       threatCount: 0,
       facingTarget: false,
-      aimYaw: PLAYER_START.yaw,
+      aimYaw: SQUAD_START.yaw,
       aimPitch: 0,
       aimPitchTarget: 0,
       burstLeft: 0,
@@ -832,8 +833,23 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
   }
 
   /**
+   * 开局主武器箱是否正对自己：4 人一排、箱子一排，按 SQUAD_ORDER 每人分到正前方的
+   * perPerson 个（主控占 slots[0]，队友依次后移），只开自己那份，不与别人争抢。
+   */
+  function inOwnLane(m: Mate, c: AirdropCrate): boolean {
+    const points = WEAPON_CRATES.points
+    const first = (m.index + 1) * WEAPON_CRATES.perPerson
+    for (let k = 0; k < WEAPON_CRATES.perPerson; k++) {
+      const p = points[first + k]
+      if (p && Math.abs(c.position.x - p.x) < 0.01 && Math.abs(c.position.z - p.z) < 0.01) return true
+    }
+    return false
+  }
+
+  /**
    * 主武器槽位没满时挑一个主武器箱：优先自己偏好的型号，同级里取最近的。
-   * 跳过已经开过一次的人、别的队友认领的、主控正要拿的箱子。
+   * 开局摆在地上的箱子只取正对自己那两个；空投下来的不限。
+   * 跳过已经开满的人、别的队友认领的、主控正要拿的箱子。
    */
   function findWeaponCrate(m: Mate): AirdropCrate | null {
     const pos = m.actor.position
@@ -845,8 +861,8 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
     for (let i = 0; i < list.length; i++) {
       const c = list[i]
       if (!c || !c.landed || c.content.kind !== 'weapon' || c.id === m.skipCrateId) continue
-      // 开局摆在地上的箱子有每人限开次数；空投下来的不限
-      if (c.limited && quotaUsed) continue
+      // 开局摆在地上的箱子：有每人限开次数，且只开正对自己的那份；空投下来的不限
+      if (c.limited && (quotaUsed || !inOwnLane(m, c))) continue
       const preferred = m.def.preferredWeapons.includes(c.content.weapon)
       const dSq = distXZSq(pos, c.position)
       // 同为偏好（或同为非偏好）时比距离；已经选中偏好箱就不再换成别的
