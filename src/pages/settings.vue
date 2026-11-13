@@ -10,7 +10,7 @@
       <SettingsPanel />
     </div>
 
-    <GameButton :label="t('common.backHome')" variant="secondary" @click="router.push({ name: 'home' })" />
+    <GameButton :label="t('common.backHome')" variant="primary" @click="router.push({ name: 'home' })" />
   </div>
 </template>
 

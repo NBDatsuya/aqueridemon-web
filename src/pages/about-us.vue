@@ -58,7 +58,7 @@
         </section>
 
         <div class="about-us__actions">
-          <GameButton :label="t('common.backHome')" variant="secondary" @click="goHome" />
+          <GameButton :label="t('common.backHome')" variant="primary" @click="goHome" />
         </div>
       </div>
     </ScrollableContent>
