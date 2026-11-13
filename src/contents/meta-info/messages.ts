@@ -10,6 +10,8 @@ import teamZhCN from './team/zh-CN'
 import teamEn from './team/en'
 import hudZhCN from './hud/zh-CN'
 import hudEn from './hud/en'
+import soundtrackZhCN from './soundtrack/zh-CN'
+import soundtrackEn from './soundtrack/en'
 
 export const META_MESSAGES = {
   'zh-CN': {
@@ -17,6 +19,7 @@ export const META_MESSAGES = {
       game: gameZhCN,
       team: teamZhCN,
       hud: hudZhCN,
+      soundtrack: soundtrackZhCN,
     },
   },
   en: {
@@ -24,6 +27,7 @@ export const META_MESSAGES = {
       game: gameEn,
       team: teamEn,
       hud: hudEn,
+      soundtrack: soundtrackEn,
     },
   },
 }

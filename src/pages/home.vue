@@ -53,6 +53,11 @@ const menuItems = [
     onClick: () => router.push({ name: 'settings' }),
   },
   {
+    label: 'home.musicGallery',
+    groupStart: false,
+    onClick: () => router.push({ name: 'music-gallery' }),
+  },
+  {
     label: 'home.aboutUs',
     groupStart: false,
     onClick: () => router.push({ name: 'about-us' }),

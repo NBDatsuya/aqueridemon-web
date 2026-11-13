@@ -14,3 +14,4 @@ export { default as HomePage } from './pages/home.vue';
 export { default as HowToPlayPage } from './pages/how-to-play.vue';
 export { default as SettingsPage } from './pages/settings.vue';
 export { default as AboutUsPage } from './pages/about-us.vue';
+export { default as MusicGalleryPage } from './pages/music-gallery.vue';

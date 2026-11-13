@@ -25,9 +25,20 @@ const loadTitleBackdrop = () =>
     titleBackdrop = null;
     throw error;
   }));
+/** 已加载的背景模块；灯光脉动每帧调用，不经过 Promise */
+let titleBackdropModule: typeof import('@/game/render/title-backdrop') | null = null;
 app.provide('jam:mount-title-backdrop', (host: HTMLElement) =>
-  loadTitleBackdrop().then((m) => m.mountTitleBackdrop(host)),
+  loadTitleBackdrop().then((m) => {
+    titleBackdropModule = m;
+    return m.mountTitleBackdrop(host);
+  }),
 );
+// 音乐鉴赏：背景灯光随节拍变亮（背景还没加载时忽略）
+app.provide('jam:set-backdrop-pulse', (level: number) => {
+  titleBackdropModule?.setTitleBackdropPulse(level);
+});
+// 音乐鉴赏的播放器：动态 import，只带音频生成代码
+app.provide('jam:load-music-gallery', () => import('@/game/generators/audio/gallery'));
 // 进入游戏前释放背景的渲染器与场地，不和游戏渲染器同时占显存
 router.beforeEach((to) => {
   if (to.name === 'game' && titleBackdrop) {
