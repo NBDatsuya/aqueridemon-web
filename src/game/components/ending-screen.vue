@@ -87,11 +87,11 @@ const tag = computed(() => {
 const title = computed(() => {
   switch (props.ending.kind) {
     case 'HE':
-      return '任务完成：完美撤离'
+      return '完美撤离'
     case 'NE_CASUALTY':
-      return '任务完成：撤离成功'
+      return '撤离成功'
     case 'NE_NO_SAMPLE':
-      return '任务完成：全员撤离'
+      return '全员撤离'
     default:
       return '任务失败'
   }
