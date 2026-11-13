@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import momakoLogo from '../assets/momako-logo.webp';
 
 interface Tech {
   label: string;
@@ -27,9 +28,12 @@ const { t } = useI18n();
 <template>
   <div class="mmkd-credit">
     <div class="mmkd-credit__header">
+      <a :href="props.repoUrl" target="_blank" rel="noopener noreferrer" class="mmkd-credit__logo-link">
+        <img :src="momakoLogo" alt="Momako" class="mmkd-credit__logo" draggable="false" />
+      </a>
       <div class="mmkd-credit__title-group">
         <a :href="props.repoUrl" target="_blank" rel="noopener noreferrer" class="mmkd-credit__name">
-          Momako GameJam Matrix
+          Momako
         </a>
         <p class="mmkd-credit__desc">{{ t('credit.desc') }}</p>
       </div>
@@ -61,12 +65,21 @@ const { t } = useI18n();
   @apply flex items-center gap-4;
 }
 
+/* 原图是白底插画，放在白色圆角底板上 */
+.mmkd-credit__logo-link {
+  @apply shrink-0 overflow-hidden rounded-lg bg-white ring-1 ring-amber-500/30 transition-shadow hover:ring-amber-400;
+}
+
+.mmkd-credit__logo {
+  @apply block h-20 w-20 object-contain select-none;
+}
+
 .mmkd-credit__title-group {
   @apply flex flex-col gap-1;
 }
 
 .mmkd-credit__name {
-  @apply text-sm font-semibold text-amber-400 no-underline transition-colors hover:text-amber-200;
+  @apply text-lg font-bold text-amber-400 no-underline transition-colors hover:text-amber-200;
 }
 
 .mmkd-credit__desc {
