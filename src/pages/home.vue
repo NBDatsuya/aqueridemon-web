@@ -16,6 +16,7 @@
         type="button"
         class="home-page__item"
         :class="{ 'home-page__item--group': item.groupStart }"
+        @pointerenter="playHover"
         @click="item.onClick"
       >
         {{ t(item.label) }}
@@ -28,9 +29,11 @@
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { useUiSound } from '../composables/use-ui-sound';
 
 const router = useRouter();
 const { t } = useI18n();
+const { playHover } = useUiSound();
 
 /** groupStart：与上一项之间留出分组间距（CS 1.6 菜单按功能分组） */
 const menuItems = [
