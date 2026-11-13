@@ -52,7 +52,8 @@ export type SfxRenderer = (sr: number, rng: Rng, variant: number) => Rendered
 export type SfxPriority = 1 | 2 | 3
 
 export interface SfxDef {
-  render: SfxRenderer
+  /** 合成函数；external 条目没有合成实现，声音来自加载的音频文件 */
+  render?: SfxRenderer
   priority: SfxPriority
   /** 基础音量 */
   gain: number
@@ -72,6 +73,8 @@ export interface SfxDef {
   jitter: number
   /** 预渲染的变体数量，播放时随机选一个 */
   variants: number
+  /** 声音来自外部音频文件（预生成资源），不参与合成预渲染，缓存未命中时静默跳过 */
+  external?: boolean
 }
 
 type SfxTuning = Partial<Omit<SfxDef, 'render' | 'priority' | 'gain'>>
@@ -104,6 +107,24 @@ function shot(weapon: WeaponId, gain: number, throttle: number): SfxDef {
   })
 }
 
+/** 外部音频条目：不合成，只在资源加载成功后发声 */
+function externalDef(priority: SfxPriority, gain: number, tuning: SfxTuning = {}): SfxDef {
+  return {
+    priority,
+    gain,
+    throttle: 0.05,
+    maxVoices: 3,
+    refDistance: 4,
+    maxDistance: 60,
+    reverb: 0,
+    distortion: false,
+    jitter: 0,
+    variants: 1,
+    external: true,
+    ...tuning,
+  }
+}
+
 /** Boss 音效的公共参数：全场可闻 */
 const BOSS: SfxTuning = { refDistance: 18, maxDistance: 400, maxVoices: 2 }
 
@@ -124,6 +145,8 @@ export const SFX: Record<SfxId, SfxDef> = {
   click: def(renderClick, 3, 0.5, { throttle: 0.04 }),
   hit: def(renderHit, 3, 0.5, { throttle: 0.03, jitter: 0.04 }),
   headshot: def(renderHeadshot, 3, 0.65, { throttle: 0.05 }),
+  // 爆头击杀语音：Qwen-Audio-TTS 预生成（public/audio/headshot-kill.wav）；增益高于枪声，报点要压得住场
+  voice_headshot_kill: externalDef(3, 1.35, { throttle: 1.2, maxVoices: 1, jitter: 0.04 }),
 
   // 小队成员
   footstep: def(renderFootstep, 1, 0.35, {

@@ -261,6 +261,10 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
   let moveSpread = 1
   let dryLatch = false
   let firedThisFrame = false
+  /** 是否正在开火（按住左键且武器可射击），HUD 用来点亮准星 */
+  let firingNow = false
+  /** 准星射线当前是否指向敌人 */
+  let aimingEnemyNow = false
 
   // 交互
   const interactionInfo: InteractionInfo = { kind: 'airdrop', text: '', progress: 0 }
@@ -727,6 +731,23 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     recoilYaw = damp(recoilYaw, 0, RECOIL.yawRecoverRate, dt)
   }
 
+  /** 准星中心射线是否指向敌人：先求场景遮挡距离，再看丧尸 / Boss 是否更近（被墙挡住不算） */
+  function updateAimEnemy(): void {
+    aimingEnemyNow = false
+    if (!ready || actor.status !== 'alive') return
+    const wall = ctx.world.raycast(eye, forward, MAX_SHOT_DISTANCE)
+    const limit = wall ? wall.distance : MAX_SHOT_DISTANCE
+    const enemyHit = ctx.enemies.raycast(eye, forward, limit)
+    if (enemyHit && enemyHit.enemy && enemyHit.distance <= limit) {
+      aimingEnemyNow = true
+      return
+    }
+    if (ctx.boss.active && ctx.boss.alive) {
+      const bossHit = ctx.boss.raycast(eye, forward, limit)
+      if (bossHit && bossHit.distance <= limit) aimingEnemyNow = true
+    }
+  }
+
   /** 发射一发子弹：散布、三路射线取最近、伤害、特效、音效、事件、后坐 */
   function fireShot(weapon: WeaponState, def: WeaponDef): void {
     weapon.mag -= 1
@@ -864,6 +885,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     if (!weapon || !alive) {
       reloadTimer = -1
       dryLatch = false
+      firingNow = false
       if (fireTimer < 0) fireTimer = 0
       return
     }
@@ -881,6 +903,8 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     }
 
     const triggerDown = input.isMouseDown(0)
+    // HUD 的准星高亮：按住左键且武器随时能响（换弹、切枪、空仓都不算）
+    firingNow = canUse && triggerDown && switchTimer <= 0 && reloadTimer < 0 && weapon.mag > 0
     if (canUse && switchTimer <= 0 && reloadTimer < 0) {
       if (input.wasPressed('KeyR')) {
         startReload(weapon, def)
@@ -917,6 +941,8 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     recoilPitch = 0
     recoilYaw = 0
     bloom = 0
+    firingNow = false
+    aimingEnemyNow = false
 
     if (to === 'downed') {
       bodyYaw = yaw
@@ -1011,6 +1037,8 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     applyCamera(status)
     firedThisFrame = false
     updateWeapons(dt, alive, canAct && !locked)
+    // 准星指向检测用开火后的视线，与画面中心的指向一致
+    updateAimEnemy()
     // 开火后视角被后坐抬高：重写第一人称相机
     if (firedThisFrame) applyFirstPerson()
 
@@ -1086,6 +1114,12 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     },
     get spread(): number {
       return currentSpread()
+    },
+    get firing(): boolean {
+      return firingNow
+    },
+    get aimingEnemy(): boolean {
+      return aimingEnemyNow
     },
     get interaction(): InteractionInfo | null {
       return hasInteraction ? interactionInfo : null

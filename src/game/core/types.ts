@@ -411,6 +411,7 @@ export type SfxId =
   | 'click'
   | 'hit'
   | 'headshot'
+  | 'voice_headshot_kill'
   | 'footstep'
   | 'hurt'
   | 'body_fall'
@@ -608,6 +609,10 @@ export interface PlayerSystem extends System {
   readonly reloadProgress: number
   /** 当前准星散布（弧度），HUD 用来画准星开合 */
   readonly spread: number
+  /** 是否正在开火（按住左键且武器可射击） */
+  readonly firing: boolean
+  /** 准星射线当前是否指向敌人（丧尸 / Boss；被场景挡住不算） */
+  readonly aimingEnemy: boolean
   /** 当前可用的交互；没有则为 null */
   readonly interaction: InteractionInfo | null
   /** 开局选枪：清空武器并发放满弹的指定武器 */
