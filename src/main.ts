@@ -17,6 +17,23 @@ const i18n = createJamI18n({
 const app = createApp(App);
 app.provide('jam:get-how-to-play', getHowToPlayMarkdown);
 app.provide('jam:get-oss-credits', getOssCredits);
+// 标题菜单实时 3D 背景：动态 import，three 与游戏代码不进主包
+let titleBackdrop: Promise<typeof import('@/game/render/title-backdrop')> | null = null;
+const loadTitleBackdrop = () =>
+  (titleBackdrop ??= import('@/game/render/title-backdrop').catch((error: unknown) => {
+    // 加载失败不缓存，下次进入菜单重试
+    titleBackdrop = null;
+    throw error;
+  }));
+app.provide('jam:mount-title-backdrop', (host: HTMLElement) =>
+  loadTitleBackdrop().then((m) => m.mountTitleBackdrop(host)),
+);
+// 进入游戏前释放背景的渲染器与场地，不和游戏渲染器同时占显存
+router.beforeEach((to) => {
+  if (to.name === 'game' && titleBackdrop) {
+    titleBackdrop.then((m) => m.disposeTitleBackdrop()).catch(() => {});
+  }
+});
 app.use(pinia);
 app.use(router);
 app.use(i18n);
