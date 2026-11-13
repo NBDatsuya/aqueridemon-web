@@ -20,7 +20,7 @@ import {
   WEAPONS,
 } from '../core/config'
 import { createEvents } from '../core/events'
-import { gameLoading } from '../core/loading'
+import { LOADING_LABELS, gameLoading } from '../core/loading'
 import { bindHudActions, hud, resetHud } from '../core/state'
 import type { HudEnding } from '../core/state'
 import type {
@@ -35,6 +35,8 @@ import type {
 } from '../core/types'
 import { createAudio } from '../generators/audio'
 import { actorModels } from '../generators/geometry'
+import { frameBudget, progressRange } from '../render/warmup'
+import type { ProgressCallback } from '../render/warmup'
 import { createRng } from '../utils/random'
 import { damp } from '../utils/math'
 import { createAirdrops } from './airdrops'
@@ -98,9 +100,11 @@ export interface EngineOptions {
 
 /**
  * 创建一局游戏。销毁后需重新创建才能再开一局。
+ * 各系统之间让出一帧，加载遮罩的进度条按实际完成的份额走；中途被取代时调用方负责 dispose。
  * @param options 由 TresCanvas 提供的场景、相机、渲染器与画布
+ * @param onProgress 创建进度 0..1 与当前在做的事
  */
-export function createEngine(options: EngineOptions): GameEngine {
+export async function createEngine(options: EngineOptions, onProgress: ProgressCallback = () => {}): Promise<GameEngine> {
   const { scene, camera, renderer, dom } = options
 
   resetHud()
@@ -121,16 +125,39 @@ export function createEngine(options: EngineOptions): GameEngine {
 
   if (!camera.parent) scene.add(camera)
 
-  // 创建顺序即契约规定的顺序；工厂执行期间不能访问尚未创建的系统
-  ctx.input = createInput(ctx, dom)
-  ctx.world = createWorld(ctx)
-  ctx.effects = createEffects(ctx)
-  ctx.player = createPlayer(ctx)
-  ctx.teammates = createTeammates(ctx)
-  ctx.enemies = createEnemies(ctx)
-  ctx.boss = createBoss(ctx)
-  ctx.airdrops = createAirdrops(ctx)
-  ctx.evac = createEvac(ctx)
+  // 创建顺序即契约规定的顺序；工厂执行期间不能访问尚未创建的系统。
+  // weight 是该系统在进度条上占的份额：世界（程序贴图、几何与场地布置）最重，其余按个数平分
+  const WORLD_WEIGHT = 12
+  const steps: Array<{ weight: number; run: (report: ProgressCallback) => Promise<void> | void }> = [
+    { weight: 1, run: () => void (ctx.input = createInput(ctx, dom)) },
+    {
+      weight: WORLD_WEIGHT,
+      run: (report) =>
+        createWorld(ctx, (ratio, label) => report(ratio, `${LOADING_LABELS.world}：${label}…`)).then((world) => {
+          ctx.world = world
+        }),
+    },
+    { weight: 1, run: () => void (ctx.effects = createEffects(ctx)) },
+    { weight: 1, run: () => void (ctx.player = createPlayer(ctx)) },
+    { weight: 1, run: () => void (ctx.teammates = createTeammates(ctx)) },
+    { weight: 1, run: () => void (ctx.enemies = createEnemies(ctx)) },
+    { weight: 1, run: () => void (ctx.boss = createBoss(ctx)) },
+    { weight: 1, run: () => void (ctx.airdrops = createAirdrops(ctx)) },
+    { weight: 1, run: () => void (ctx.evac = createEvac(ctx)) },
+  ]
+  const totalWeight = steps.reduce((sum, step) => sum + step.weight, 0)
+  const yieldFrame = frameBudget()
+  let doneWeight = 0
+  for (const step of steps) {
+    const from = doneWeight / totalWeight
+    const to = (doneWeight + step.weight) / totalWeight
+    // 世界会自己回报阶段名，其余系统统一显示“正在搭建战场…”
+    onProgress(from, LOADING_LABELS.systems)
+    await step.run(progressRange(onProgress, from, to))
+    doneWeight += step.weight
+    onProgress(to, LOADING_LABELS.systems)
+    await yieldFrame()
+  }
   ctx.combatants = [ctx.player.actor, ...ctx.teammates.actors]
 
   const { input, world, effects, player, teammates, enemies, boss, airdrops, evac, time, stats } = ctx
@@ -142,9 +169,8 @@ export function createEngine(options: EngineOptions): GameEngine {
   airdrops.deployWeaponCrates()
   player.setControl(true)
 
-  // 开局静默期一次性编译全场着色器：Boss、直升机与特效此刻都已挂在场景里（不可见），
-  // 提前编译掉 Boss 登场那一刻才会触发的首次编译，消除登场卡顿
-  renderer.compile(scene, camera)
+  // 全场着色器（含此刻已挂在场景里但不可见的 Boss、直升机与特效）由调用方在加载遮罩下预编译，
+  // 按实际渲染目标编译并回报进度，这里不再同步编译一遍
 
   /* ── 内部状态 ── */
 

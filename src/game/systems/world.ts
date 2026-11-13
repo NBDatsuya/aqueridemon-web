@@ -27,7 +27,6 @@ import {
   FIELD,
   PAD,
   PLAYER,
-  PLAYER_START,
   PLAY_BOUNDS,
   SPAWN_POINTS,
 } from '../core/config'
@@ -60,6 +59,8 @@ import { createHills } from '../generators/geometry/terrain'
 import { createSkyMaterial } from '../generators/textures'
 import { createSurfaceMaterial } from '../generators/textures/pbr'
 import { QUALITY_PROFILES, renderState } from '../render/settings'
+import { frameBudget } from '../render/warmup'
+import type { ProgressCallback } from '../render/warmup'
 import { clamp, rayAabb } from '../utils/math'
 
 /** 内部碰撞体：stair 标记的台阶不参与避障（可以直接走上去） */
@@ -161,11 +162,29 @@ function segBox(
   return t0
 }
 
+/** 创建流程的阶段名，顺序即执行顺序；进度按已完成的阶段数计，阶段内部再按已完成的项目细分 */
+const BUILD_STEPS = [
+  '光照',
+  '天空与环境反射',
+  '草地与场地标线',
+  '球门与四角掩体',
+  '北侧看台',
+  '随机掩体',
+  '北侧围栏',
+  '树林与后山',
+  '东侧建筑与远景',
+  '南侧围墙',
+  '西侧建筑与远景',
+  '碰撞数据',
+] as const
+
 /**
  * 创建世界系统。
+ * 各阶段之间让出一帧，加载遮罩的进度条按实际完成的阶段与项目走。
  * @param ctx 游戏上下文（工厂期间只使用 scene 与 rng）
+ * @param report 进度 0..1 与当前阶段名
  */
-export function createWorld(ctx: GameContext): WorldSystem {
+export async function createWorld(ctx: GameContext, report: ProgressCallback = () => {}): Promise<WorldSystem> {
   const { scene } = ctx
   const rng = ctx.rng.fork()
   const root = new Group()
@@ -181,8 +200,16 @@ export function createWorld(ctx: GameContext): WorldSystem {
   const previousFog = scene.fog
   scene.fog = new Fog(FOG_COLOR, FOG_NEAR, FOG_FAR)
 
+  const yieldFrame = frameBudget()
+  /** 进入 BUILD_STEPS[index] 阶段；inner 为该阶段内部已完成的比例 0..1 */
+  const advance = async (index: number, inner = 0): Promise<void> => {
+    report((index + Math.min(1, Math.max(0, inner))) / BUILD_STEPS.length, BUILD_STEPS[index] ?? '')
+    await yieldFrame()
+  }
+
   /* ── 光照 ── */
 
+  await advance(0)
   const ambient = new AmbientLight(0xffffff, AMBIENT_INTENSITY)
   const sun = new DirectionalLight(0xfff0d8, SUN_INTENSITY)
   sun.castShadow = true
@@ -232,6 +259,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
 
   /* ── 天空 ── */
 
+  await advance(1)
   const skyMaterial = createSkyMaterial()
   const skySun = skyMaterial.uniforms.uSunDir as { value: Vector3 }
   skySun.value.copy(SUN_DIR)
@@ -261,6 +289,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
 
   /* ── 地面与场地标线 ── */
 
+  await advance(2)
   const plane = new PlaneGeometry(1, 1)
   ownGeometries.push(plane)
 
@@ -358,6 +387,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   }
 
   // 两端球门（只有门框，不挡路）
+  await advance(3)
   put(generateGoal(), -FIELD.halfX, 0, 0, false)
   put(generateGoal(), FIELD.halfX, 0, 2, false)
 
@@ -376,10 +406,12 @@ export function createWorld(ctx: GameContext): WorldSystem {
   put(generateSandbags(4, 3), nw.x + 2.4, nw.z, 1)
 
   // 北侧看台：最低一级靠场内（南），往北逐级升高
+  await advance(4)
   const stepMaterial = createSurfaceMaterial('concrete', { repeat: [8, 1], color: 0xd2cec6 })
   ownMaterials.push(stepMaterial)
   const stepDepth = (BLEACHERS.maxZ - BLEACHERS.minZ) / BLEACHERS.steps
   for (let i = 0; i < BLEACHERS.steps; i++) {
+    await advance(4, i / BLEACHERS.steps)
     const height = (i + 1) * BLEACHERS.stepHeight
     const maxZ = BLEACHERS.maxZ - i * stepDepth
     const minZ = maxZ - stepDepth
@@ -411,6 +443,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   }
 
   // 随机中小型掩体：避开停机坪、出生点、空投点、Boss 进场通道、四角掩体和彼此
+  await advance(5)
   const coverMakers: (() => Prop)[] = [
     generateBench,
     generateLocker,
@@ -429,7 +462,8 @@ export function createWorld(ctx: GameContext): WorldSystem {
   const corners = [ne, se, sw, nw]
   const spotFree = (x: number, z: number): boolean => {
     if (Math.hypot(x - PAD.x, z - PAD.z) < 9 + 2) return false
-    if (Math.hypot(x - PLAYER_START.x, z - PLAYER_START.z) < 6 + 2) return false
+    // 开局队形区：人员排（z=14）与主武器箱排（z=7）整片留空
+    if (Math.abs(x) < 13 && z > 4 && z < 17) return false
     if (Math.abs(x) < 9 + 2 && z < -20) return false
     if (x > BLEACHERS.minX - 3 && x < BLEACHERS.maxX + 3 && z < BLEACHERS.maxZ + 4) return false
     for (const p of AIRDROP_POINTS) if (Math.hypot(x - p.x, z - p.z) < 3 + 2.2) return false
@@ -438,6 +472,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
     return true
   }
   for (let i = 0; i < COVER_COUNT; i++) {
+    await advance(5, i / COVER_COUNT)
     const make = coverMakers[i % coverMakers.length]
     if (!make) continue
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -457,8 +492,13 @@ export function createWorld(ctx: GameContext): WorldSystem {
     SPAWN_POINTS.some((p) => p.side === side && Math.abs(x - p.x) < 5)
 
   // 北：倒塌的围栏（中间一段留给 Boss 撕开）、横倒的大树、树林与后山
+  await advance(6)
   const FENCE_LEN = 4
+  const fenceCount = Math.floor((PLAY_BOUNDS.halfX * 2 - 2) / FENCE_LEN) + 1
+  let fenceIndex = 0
   for (let x = -PLAY_BOUNDS.halfX + 1; x <= PLAY_BOUNDS.halfX - 1; x += FENCE_LEN) {
+    await advance(6, fenceIndex / fenceCount)
+    fenceIndex++
     if (onSpawnLane(x, 'north')) continue
     const group = put(generateFence(FENCE_LEN), x, BOSS_ENTRY.breachZ, 0, false)
     if (Math.abs(x - BOSS_ENTRY.startX) <= BOSS_ENTRY.breachHalfWidth) {
@@ -483,6 +523,8 @@ export function createWorld(ctx: GameContext): WorldSystem {
     if (z < 0 && Math.abs(x - BOSS_ENTRY.startX) < BOSS_ENTRY.breachHalfWidth + 3 && z > -90) return false
     if (z < 0 && onSpawnLane(x, 'north') && z > -72) return false
     if (z > 0 && onSpawnLane(x, 'south') && z < 72) return false
+    // 开局队形区（人员排 + 主武器箱排）南侧留空：比原来的 |x|<8 更宽
+    if (z > 0 && Math.abs(x) < 13 && z < 20) return false
     if (z > 0 && Math.abs(x) < 8) return false
     for (const p of SPAWN_POINTS) if (Math.hypot(x - p.x, z - p.z) < 9) return false
     for (const s of treeSpots) if (Math.hypot(x - s.x, z - s.z) < TREE_SPACING) return false
@@ -495,6 +537,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
     const z = north ? rng.range(-130, -52) : rng.range(-60, 105)
     if (treeFree(x, z)) treeSpots.push({ x, z })
   }
+  await advance(7)
   const forest = createForest(rng, treeSpots, 0.4)
   root.add(forest.group)
 
@@ -503,6 +546,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   root.add(hills.mesh)
 
   // 东：体育馆、废弃汽车、公告板
+  await advance(8)
   put(generateGym(44, 14, 72, 0xb8c6d4), GYM.x, GYM.z, 0, false)
   put(generateCar(0x7a2f2a, { flat: true }), PLAY_BOUNDS.halfX + 4, -32, 1, false)
   put(generateCar(0x2f4a3a, { style: 'hatch' }), PLAY_BOUNDS.halfX + 5.5, 3, 1, false)
@@ -510,6 +554,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   put(generateBillboard(), PLAY_BOUNDS.halfX + 3, -8, 1, false)
 
   // 南：校门围墙（已封锁）、课桌椅障碍墙、倾斜的路灯
+  await advance(9)
   const WALL_LEN = 8
   const wallZ = PLAY_BOUNDS.halfZ + 4.5
   const wallXs: number[] = []
@@ -517,12 +562,15 @@ export function createWorld(ctx: GameContext): WorldSystem {
     if (Math.abs(x) < 5 || onSpawnLane(x, 'south')) continue
     wallXs.push(x)
   }
-  wallXs.forEach((x, i) => {
+  for (let i = 0; i < wallXs.length; i++) {
+    const x = wallXs[i]
+    if (x === undefined) continue
+    await advance(9, i / wallXs.length)
     // 和下一段相接时，那一段左端的砖柱就是这一段的右端柱
     const next = wallXs[i + 1]
     const joined = next !== undefined && Math.abs(next - x - WALL_LEN) < 1e-6
     put(generateWall(WALL_LEN, 2.6, !joined), x, wallZ, 0, false)
-  })
+  }
   put(generateGate(), 0, wallZ, 0, false)
   put(generateDeskPile(5, 3), -11, PLAY_BOUNDS.halfZ + 2.2, 0, false)
   put(generateDeskPile(5, 3), 12, PLAY_BOUNDS.halfZ + 2.4, 0, false)
@@ -530,6 +578,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   put(generateLampPost(-0.24), 22, PLAY_BOUNDS.halfZ + 2, 2, false)
 
   // 西：教学楼、翻倒的垃圾桶、木板铁丝网路障
+  await advance(10)
   put(generateSchool(44, 18, 84, 0xd8d0c0), SCHOOL.x, SCHOOL.z, 0, false)
   put(generateTrashBin(), -PLAY_BOUNDS.halfX - 2.5, -8, 0, false)
   put(generateTrashBin(), -PLAY_BOUNDS.halfX - 3, 9, 1, false)
@@ -539,6 +588,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
 
   /* ── 碰撞与射线 ── */
 
+  await advance(11)
   const hit: RayHit = { distance: 0, point: new Vector3(), normal: new Vector3(), kind: 'world' }
   const tmpDir = new Vector3()
 

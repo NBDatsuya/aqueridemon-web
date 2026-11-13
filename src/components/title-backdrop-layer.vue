@@ -34,15 +34,18 @@ withDefaults(defineProps<Props>(), {
 const shown = defineModel<boolean>('shown', { default: false });
 /** 背景仍在创建，父级据此显示加载遮罩 */
 const loading = defineModel<boolean>('loading', { default: false });
+/** 背景创建进度 0..1，父级据此画进度条 */
+const progress = defineModel<number>('progress', { default: 0 });
+/** 当前阶段的说明文案（例如“正在编译着色器…”），父级显示在遮罩上 */
+const stageLabel = defineModel<string>('label', { default: '' });
 
 /**
- * 可选：把实时背景挂进容器的函数，首帧画完后 resolve 出卸载函数
- * （游戏侧在 main.ts 提供，HUD 层不直接依赖游戏代码）
+ * 可选：把实时背景挂进容器的函数，首帧画完后 resolve 出卸载函数；
+ * 第二个参数用于回报创建进度与阶段文案（游戏侧在 main.ts 提供，HUD 层不直接依赖游戏代码）
  */
-const mountTitleBackdrop = inject<((host: HTMLElement) => Promise<() => void>) | null>(
-  'jam:mount-title-backdrop',
-  null,
-);
+const mountTitleBackdrop = inject<
+  ((host: HTMLElement, onProgress: (ratio: number, label?: string) => void) => Promise<() => void>) | null
+>('jam:mount-title-backdrop', null);
 
 const host = ref<HTMLElement | null>(null);
 let unmounted = false;
@@ -52,6 +55,8 @@ let release: (() => void) | null = null;
 // 重新挂载（例如从游戏页返回）时从未显示状态开始
 shown.value = false;
 loading.value = false;
+progress.value = 0;
+stageLabel.value = '';
 
 onMounted(() => {
   const el = host.value;
@@ -62,15 +67,21 @@ onMounted(() => {
     pendingFrame = 0;
     if (!settled && !unmounted) loading.value = true;
   });
+  const reportProgress = (ratio: number, label?: string): void => {
+    if (unmounted) return;
+    progress.value = ratio;
+    if (label) stageLabel.value = label;
+  };
   // 包一层 Promise：提供方同步抛错也走静默回退
   Promise.resolve()
-    .then(() => mountTitleBackdrop(el))
+    .then(() => mountTitleBackdrop(el, reportProgress))
     .then((cleanup) => {
       if (unmounted) {
         cleanup();
         return;
       }
       release = cleanup;
+      progress.value = 1;
       shown.value = true;
     })
     .catch(() => {

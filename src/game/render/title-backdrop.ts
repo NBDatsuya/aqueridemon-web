@@ -6,9 +6,12 @@
 
 import { ACESFilmicToneMapping, MathUtils, PCFSoftShadowMap, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from 'three'
 import { GAME_SEED } from '../core/config'
+import { LOADING_LABELS } from '../core/loading'
 import type { GameContext, WorldSystem } from '../core/types'
 import { createWorld } from '../systems/world'
 import { createRng } from '../utils/random'
+import { compileWithProgress, nextFrame, progressRange, uploadTexturesWithProgress } from './warmup'
+import type { ProgressCallback } from './warmup'
 
 /** 背景图的曝光：俯视时大片草地受光，比游戏内（1）略暗一点 */
 const EXPOSURE = 0.95
@@ -51,6 +54,14 @@ const MAX_DT = 0.1
 /** 灯光脉动为 1 时曝光的增幅（音乐鉴赏页随节拍调亮） */
 const PULSE_EXPOSURE = 0.3
 
+/**
+ * 创建流程各阶段在进度条上的终点（0..1，模块代码已由 main.ts 计入）：
+ * 建场地（程序贴图与几何，最重）→ 编译着色器 → 上传贴图 → 首帧。
+ */
+const STAGE_WORLD = 0.4
+const STAGE_SHADERS = 0.85
+const STAGE_TEXTURES = 0.98
+
 interface Backdrop {
   readonly renderer: WebGLRenderer
   readonly scene: Scene
@@ -73,10 +84,10 @@ let activeCleanup: (() => void) | null = null
 /** 灯光脉动 0..1：由页面每帧写入，下一帧渲染时折算成曝光 */
 let pulse = 0
 
-const aimTarget = new Vector3()
+/** 创建进度回调：由挂载方传入，创建流程各阶段写入 */
+let reportProgress: ProgressCallback = () => {}
 
-/** 等下一帧画完（连续两次 rAF 才能保证上一帧的遮罩已经上屏） */
-const nextFrame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+const aimTarget = new Vector3()
 
 const wave = (t: number, period: number, phase: number): number => Math.sin((t / period) * Math.PI * 2 + phase)
 
@@ -108,14 +119,32 @@ async function create(): Promise<Backdrop> {
     // createWorld 在工厂期间只用到 scene、rng、renderer（rng 用来派生子序列，renderer 用来烘焙环境贴图），
     // 其余字段不会被访问，所以这里只给这三个字段再转型
     const ctx = { scene, rng: createRng(GAME_SEED), renderer } as unknown as GameContext
-    world = createWorld(ctx)
+    // 场地生成分阶段让出主线程，进度条按已完成的阶段数走
+    const worldProgress = progressRange(reportProgress, 0, STAGE_WORLD)
+    world = await createWorld(ctx, (ratio, label) => worldProgress(ratio, `${LOADING_LABELS.world}：${label}…`))
     // 世界设置的雾（近 90 远 420）在高空会把画面洗白，背景不需要雾
     scene.fog = null
 
     const camera = new PerspectiveCamera(FOV, 1, 1, 1000)
     aim(camera, 0, { x: 0, y: 0 })
-    // 支持并行编译时着色器在后台编译，主线程少卡一点
-    await renderer.compileAsync(scene, camera)
+    // 支持并行编译时着色器在后台编译，主线程少卡一点；按已链接完成的程序数回报进度
+    const neverStale = (): boolean => false
+    reportProgress(STAGE_WORLD, LOADING_LABELS.shaders)
+    await compileWithProgress(
+      renderer,
+      scene,
+      camera,
+      progressRange((ratio) => reportProgress(ratio, LOADING_LABELS.shaders), STAGE_WORLD, STAGE_SHADERS),
+      neverStale,
+    )
+    // 背景直接画到屏幕，没有后处理，贴图在这里一并上传完，首帧不再等 GPU
+    await uploadTexturesWithProgress(
+      renderer,
+      scene,
+      progressRange((ratio) => reportProgress(ratio, LOADING_LABELS.textures), STAGE_SHADERS, STAGE_TEXTURES),
+      neverStale,
+    )
+    reportProgress(STAGE_TEXTURES, LOADING_LABELS.firstFrame)
     return { renderer, scene, camera, world, elapsed: 0 }
   } catch (error) {
     world?.dispose()
@@ -174,9 +203,14 @@ function acquire(): Promise<Backdrop> {
  * 把实时背景挂到 host 里并开始渲染。首帧画完后才 resolve，调用方可以据此淡入。
  * 用户开启“减少动态效果”时只画静止画面。
  * @param host 背景容器，画布会铺满它
+ * @param onProgress 创建进度 0..1；首帧画完时报 1
  * @returns 卸载函数：停止渲染并移除画布（实例保留，下次挂载直接复用）
  */
-export async function mountTitleBackdrop(host: HTMLElement): Promise<() => void> {
+export async function mountTitleBackdrop(
+  host: HTMLElement,
+  onProgress: ProgressCallback = () => {},
+): Promise<() => void> {
+  reportProgress = onProgress
   activeCleanup?.()
   const task = acquire()
   const backdrop = await task
@@ -236,6 +270,7 @@ export async function mountTitleBackdrop(host: HTMLElement): Promise<() => void>
 
   resize()
   draw(0)
+  reportProgress(1)
   if (!still) frame = requestAnimationFrame(tick)
 
   let released = false
@@ -264,6 +299,7 @@ export function setTitleBackdropPulse(level: number): void {
 /** 释放背景的渲染器与场地（进入游戏前调用）；正在挂载的背景会先停止渲染 */
 export function disposeTitleBackdrop(): void {
   activeCleanup?.()
+  reportProgress = () => {}
   const task = pending
   pending = null
   task?.then(destroy, () => {})

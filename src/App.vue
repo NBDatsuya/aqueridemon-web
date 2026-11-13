@@ -4,10 +4,19 @@
       v-if="backdropEnabled"
       v-model:shown="backdropShown"
       v-model:loading="backdropLoading"
+      v-model:progress="backdropProgress"
+      v-model:label="backdropLabel"
       :variant="route.name === 'home' ? 'menu' : 'page'"
     />
     <RouterView />
-    <LoadingOverlay :active="backdropEnabled && backdropLoading" />
+    <!-- 全局只有这一个加载遮罩，跨路由常驻：从点击开始游戏一直盖到游戏准备完毕，中途不会露出底下的页面 -->
+    <LoadingOverlay
+      :active="overlayActive"
+      :label="overlayLabel"
+      :progress="overlayProgress"
+      @shown="notifyLoadingScreenShown"
+      @hidden="notifyLoadingScreenHidden"
+    />
   </div>
 </template>
 
@@ -15,6 +24,7 @@
 import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { loadingScreen, notifyLoadingScreenHidden, notifyLoadingScreenShown } from '@/core';
 import { useSettingsStore } from '@/hud';
 import LoadingOverlay from './components/loading-overlay.vue';
 import TitleBackdropLayer from './components/title-backdrop-layer.vue';
@@ -83,7 +93,20 @@ router.isReady().then(() => {
 const backdropEnabled = computed(() => routerReady.value && route.name !== 'game');
 const backdropShown = ref(false);
 const backdropLoading = ref(false);
+const backdropProgress = ref(0);
+const backdropLabel = ref('');
 const backdropActive = computed(() => backdropEnabled.value && backdropShown.value);
+
+/** 背景还没回报阶段文案时的兜底 */
+const BACKDROP_LABEL = '正在准备场景…';
+
+/** 游戏侧的加载优先：进入游戏时它比背景遮罩先打开，且跨路由不断开 */
+const overlayActive = computed(() => loadingScreen.active || (backdropEnabled.value && backdropLoading.value));
+const overlayLabel = computed(() => {
+  if (loadingScreen.active && loadingScreen.label) return loadingScreen.label;
+  return backdropLabel.value || BACKDROP_LABEL;
+});
+const overlayProgress = computed(() => (loadingScreen.active ? loadingScreen.progress : backdropProgress.value));
 
 watchEffect(() => {
   locale.value = settings.language;

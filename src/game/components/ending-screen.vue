@@ -51,6 +51,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { EVENT_KEYS, useEventBus } from '@/core'
 import { GameButton } from '@/hud'
+import { hud } from '../core/state'
 import type { HudEnding } from '../core/state'
 import { formatTime } from '../utils/math'
 
@@ -112,6 +113,8 @@ const lines = computed(() => {
 
 /** 重新开始一局（场景组件监听该事件并重建引擎） */
 function restart(): void {
+  // 先收起结局界面：重建引擎期间加载遮罩正在淡入，留着它会从半透明的遮罩后面露出来
+  hud.ending = null
   eventBus.emit(EVENT_KEYS.GAME_RESTART)
 }
 
