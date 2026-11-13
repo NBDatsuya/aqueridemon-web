@@ -10,9 +10,9 @@
 
         <div class="about-us__cards">
           <!-- 团队卡片 -->
-          <section v-if="teamInfo.name" class="about-card">
+          <section v-if="teamInfo.teamName" class="about-card">
             <p class="about-card__eyebrow">{{ t('aboutUs.team') }}</p>
-            <h3 class="about-card__heading">{{ teamInfo.name }}</h3>
+            <h3 class="about-card__heading">{{ teamInfo.teamName }}</h3>
             <p v-if="teamInfo.description" class="about-card__text">{{ teamInfo.description }}</p>
 
             <ul v-if="teamInfo.members?.length" class="about-card__members">
@@ -69,7 +69,7 @@
 import { computed, inject } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { GameMeta, TeamInfo } from '@/core';
+import type { GameMeta, TeamInfo } from '@/contents/meta-info';
 import GameButton from '../components/game-button.vue';
 import MmkdStarterCredit from '../components/mmkd-starter-credit.vue';
 import ScrollableContent from '../components/scrollable-content.vue';
