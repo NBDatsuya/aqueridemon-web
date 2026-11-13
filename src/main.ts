@@ -39,6 +39,8 @@ app.provide('jam:set-backdrop-pulse', (level: number) => {
 });
 // 音乐鉴赏的播放器：动态 import，只带音频生成代码
 app.provide('jam:load-music-gallery', () => import('@/game/generators/audio/gallery'));
+// 标题菜单 BGM（原版 Boss 曲）：同样动态 import
+app.provide('jam:load-menu-music', () => import('@/game/generators/audio/menu-music'));
 // 进入游戏前释放背景的渲染器与场地，不和游戏渲染器同时占显存
 router.beforeEach((to) => {
   if (to.name === 'game' && titleBackdrop) {

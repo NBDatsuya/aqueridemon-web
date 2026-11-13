@@ -16,7 +16,7 @@ const en: typeof zhCN = {
   },
   bossLegacy: {
     title: 'Boss Battle (Original)',
-    desc: 'C minor, 108 BPM. Low brass, timpani, a string ostinato and a horn theme that thicken section by section.',
+    desc: 'C minor, 108 BPM. Low brass, timpani, a string ostinato and a horn theme that thicken section by section. Also plays as the title menu background music.',
   },
 }
 
