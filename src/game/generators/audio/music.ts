@@ -7,6 +7,8 @@
 import type { MusicTrack } from '../../core/types'
 import type { Rng } from '../../utils/random'
 import { createRng, hashSeed } from '../../utils/random'
+import type { DnbAssets } from './dnb'
+import { buildDnb, renderDnbAssets } from './dnb'
 import { addOsc, attackDecay, createBuffer, decay, fadeEdges, mix, noiseBand, normalize, saturate, sweep } from './synth'
 
 /** 提前调度的时间窗（秒） */
@@ -22,7 +24,8 @@ const INTERMISSION_LEVEL = 0.3
 /** 定音鼓样本的基准音（C2） */
 const TIMPANI_BASE = 36
 
-type SongId = 'menu' | 'combat' | 'boss' | 'he' | 'ne'
+/** bossLegacy 是被 Drum and Bass 取代的原版 Boss 曲，游戏内不再播放，只在音乐鉴赏里离线渲染 */
+export type SongId = 'menu' | 'combat' | 'boss' | 'bossLegacy' | 'he' | 'ne'
 
 /** 曲目 → 素材。battle 与 intermission 共用同一首（间歇期去鼓、降音量）；none / be 无音乐 */
 const SONG_OF: Record<MusicTrack, SongId | null> = {
@@ -36,9 +39,10 @@ const SONG_OF: Record<MusicTrack, SongId | null> = {
   ne: 'ne',
 }
 
-const LEVEL: Record<SongId, number> = { menu: 0.9, combat: 0.8, boss: 0.85, he: 0.8, ne: 0.9 }
-const FADE_IN: Record<SongId, number> = { menu: 2.5, combat: 0.8, boss: 1, he: 1.5, ne: 2.5 }
-const REVERB_SEND: Record<SongId, number> = { menu: 0.5, combat: 0.12, boss: 0.3, he: 0.35, ne: 0.5 }
+const LEVEL: Record<SongId, number> = { menu: 0.9, combat: 0.8, boss: 0.85, bossLegacy: 0.85, he: 0.8, ne: 0.9 }
+const FADE_IN: Record<SongId, number> = { menu: 2.5, combat: 0.8, boss: 0.6, bossLegacy: 1, he: 1.5, ne: 2.5 }
+/** Boss 曲（Drum and Bass）的鼓和贝斯要干，整体发送很少；铺底与主音在 dnb.ts 里单独发送混响 */
+const REVERB_SEND: Record<SongId, number> = { menu: 0.5, combat: 0.12, boss: 0.05, bossLegacy: 0.3, he: 0.35, ne: 0.5 }
 
 interface Chord {
   /** 低音 */
@@ -92,7 +96,10 @@ const ARP_PATTERNS: readonly (readonly number[])[] = [
 /** 弦乐断奏落在哪几步（3+3+2 切分） */
 const STAB_STEPS: readonly number[] = [0, 3, 6, 8, 11, 14]
 
-/* ── 素材：Boss（C 小调，108 BPM） ── */
+/* ── 素材：Boss ──
+ * Drum and Bass（174 BPM，F 小调，Amen 式切片碎拍 + reese 贝斯），见 dnb.ts */
+
+/* ── 素材：原版 Boss（C 小调，108 BPM，仅音乐鉴赏使用） ── */
 
 const B_CM = chord(36, 60, 63, 67)
 const B_AB = chord(32, 60, 63, 68)
@@ -338,14 +345,27 @@ export interface MusicPlayer {
   dispose(): void
 }
 
+/** 乐器、打击乐样本、共享混响与各曲目的搭建函数；实时播放器与离线渲染共用 */
+interface SongBank {
+  /** 共享混响的输入 */
+  reverb: ConvolverNode
+  /** 混响返回（接到 output） */
+  reverbReturn: GainNode
+  /** 搭建一首曲子的节点图，返回按步调度的回调 */
+  build: (id: SongId, out: GainNode, rng: Rng, track: MusicTrack) => SongParts
+}
+
 /**
- * 创建音乐播放器。
- * @param ctx 已创建的 AudioContext
- * @param output 输出总线（music 总线）
+ * 创建曲库。只搭共享节点，不启动任何定时器，所以也能用在 OfflineAudioContext 上。
+ * @param ctx 音频上下文（实时或离线）
+ * @param output 混响返回接到哪里
  * @param impulse 混响用的冲激响应
+ * @param eagerDnb 是否立刻渲染 Boss 曲的碎拍素材（实时播放在解锁时渲染，Boss 登场时不卡顿）
  */
-export function createMusic(ctx: AudioContext, output: AudioNode, impulse: AudioBuffer): MusicPlayer {
+function createSongBank(ctx: BaseAudioContext, output: AudioNode, impulse: AudioBuffer, eagerDnb: boolean): SongBank {
   const kit = buildKit(ctx)
+  /** Boss 曲的碎拍与效果缓冲：渲染一次，每场 Boss 战复用 */
+  let dnb: DnbAssets | null = eagerDnb ? renderDnbAssets(ctx) : null
 
   const reverb = ctx.createConvolver()
   reverb.buffer = impulse
@@ -353,12 +373,6 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
   reverbReturn.gain.value = 0.7
   reverb.connect(reverbReturn)
   reverbReturn.connect(output)
-
-  const songs: Song[] = []
-  let active: Song | null = null
-  let current: MusicTrack = 'none'
-  let timer: ReturnType<typeof setInterval> | null = null
-  let plays = 0
 
   /* ── 乐器 ── */
 
@@ -580,8 +594,14 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
     return { stepDur, schedule, setMode, sustained: [] }
   }
 
-  /** Boss 战：低音铜管式合成 + 定音鼓 + 弦乐固定音型 + 圆号主题，逐段加厚 */
+  /** Boss 战：Drum and Bass（Amen 式切片碎拍 + reese 贝斯 + 暗色铺底 / hoover），前奏 8 小节后落拍，见 dnb.ts */
   const buildBoss = (out: GainNode, rng: Rng): SongParts => {
+    dnb ??= renderDnbAssets(ctx)
+    return buildDnb(ctx, out, reverb, rng, dnb)
+  }
+
+  /** 原版 Boss 战（已被 Drum and Bass 取代）：低音铜管式合成 + 定音鼓 + 弦乐固定音型 + 圆号主题，逐段加厚 */
+  const buildBossLegacy = (out: GainNode, rng: Rng): SongParts => {
     const stepDur = 60 / 108 / 4
     const barDur = stepDur * STEPS
     let melody = at(BOSS_MELODIES, 0)
@@ -926,9 +946,28 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
     menu: buildMenu,
     combat: buildCombat,
     boss: buildBoss,
+    bossLegacy: buildBossLegacy,
     he: buildHe,
     ne: buildNe,
   }
+
+  return { reverb, reverbReturn, build: (id, out, rng, track) => BUILDERS[id](out, rng, track) }
+}
+
+/**
+ * 创建音乐播放器。
+ * @param ctx 已创建的 AudioContext
+ * @param output 输出总线（music 总线）
+ * @param impulse 混响用的冲激响应
+ */
+export function createMusic(ctx: AudioContext, output: AudioNode, impulse: AudioBuffer): MusicPlayer {
+  const { reverb, reverbReturn, build } = createSongBank(ctx, output, impulse, true)
+
+  const songs: Song[] = []
+  let active: Song | null = null
+  let current: MusicTrack = 'none'
+  let timer: ReturnType<typeof setInterval> | null = null
+  let plays = 0
 
   /* ── 调度 ── */
 
@@ -990,7 +1029,7 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
     // 同一首每次重新开始换一个种子，变化不同但可复现
     const rng = createRng(hashSeed(`music:${id}`) + plays * 0x9e3779b1)
     plays++
-    const parts = BUILDERS[id](out, rng, track)
+    const parts = build(id, out, rng, track)
     const mode = parts.setMode ? parts.setMode(track) : 1
     const now = ctx.currentTime
     out.gain.setTargetAtTime(LEVEL[id] * mode, now, FADE_IN[id] / 3)
@@ -1034,4 +1073,61 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
   }
 
   return { setTrack, dispose }
+}
+
+/* ── 离线渲染（音乐鉴赏） ── */
+
+/** 离线渲染时第一步的起始时刻（秒），给第一下的起音留一点余量 */
+const RENDER_START = 0.05
+
+export interface RenderSongOptions {
+  /** 演奏时长（秒）：超过这个时刻的步不再排音符 */
+  duration: number
+  /** 曲尾时长（秒）：留给释音与混响，期间整体淡出 */
+  tail: number
+  /** 随机种子名：同名的渲染结果每次相同 */
+  seed: string
+  /** 同一素材的演奏模式（battle / intermission 等） */
+  track: MusicTrack
+  sampleRate?: number
+}
+
+/**
+ * 把一首曲子离线渲染成定长的立体声 AudioBuffer：一次性排好全部音符，不需要用户手势，也方便拖动进度。
+ * 输出与游戏内 music 总线（音量倍率之前）的电平一致。
+ * @param id 曲目素材
+ * @param options 时长、种子与模式
+ * @param createImpulse 混响冲激响应的生成函数（与游戏内混响一致）
+ */
+export function renderSong(
+  id: SongId,
+  options: RenderSongOptions,
+  createImpulse: (ctx: BaseAudioContext) => AudioBuffer,
+): Promise<AudioBuffer> {
+  const sampleRate = options.sampleRate ?? 44100
+  const total = RENDER_START + options.duration + options.tail
+  const ctx = new OfflineAudioContext(2, Math.ceil(total * sampleRate), sampleRate)
+  const bank = createSongBank(ctx, ctx.destination, createImpulse(ctx), false)
+
+  const out = ctx.createGain()
+  out.gain.value = 0
+  out.connect(ctx.destination)
+  const send = ctx.createGain()
+  send.gain.value = REVERB_SEND[id]
+  out.connect(send)
+  send.connect(bank.reverb)
+
+  const parts = bank.build(id, out, createRng(hashSeed(options.seed)), options.track)
+  const mode = parts.setMode ? parts.setMode(options.track) : 1
+  out.gain.setTargetAtTime(LEVEL[id] * mode, 0, FADE_IN[id] / 3)
+
+  const end = RENDER_START + options.duration
+  for (let step = 0; ; step++) {
+    const time = RENDER_START + step * parts.stepDur
+    if (time >= end - 1e-6) break
+    parts.schedule(step, time)
+  }
+  out.gain.setTargetAtTime(0, end, options.tail / 5)
+  parts.sustained.forEach((source) => source.stop(total))
+  return ctx.startRendering()
 }

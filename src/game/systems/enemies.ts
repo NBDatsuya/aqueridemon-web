@@ -55,6 +55,29 @@ const DEATH_SFX: Record<EnemyType, SfxId> = {
   runner: 'zombie_die',
   tank: 'tank_die',
 }
+/** 首次锁定附近目标时的嘶吼 */
+const ALERT_SFX: Record<EnemyType, SfxId> = {
+  common: 'zombie_alert',
+  runner: 'runner_screech',
+  tank: 'tank_roar',
+}
+const HURT_SFX: Record<EnemyType, SfxId> = {
+  common: 'zombie_hurt',
+  runner: 'runner_hurt',
+  tank: 'tank_hurt',
+}
+/** 脚步：音效、步距（米）、音量 */
+const STEP_SFX: Record<EnemyType, { id: SfxId; stride: number; volume: number }> = {
+  common: { id: 'zombie_step', stride: TUNE.commonStride, volume: 0.5 },
+  runner: { id: 'zombie_step', stride: TUNE.runnerStride, volume: 0.6 },
+  tank: { id: 'tank_step', stride: TUNE.tankStride, volume: 0.75 },
+}
+/** 各类型嗓音音高倍率的随机范围（runner 更尖、tank 变化更小） */
+const VOICE_PITCH: Record<EnemyType, readonly [number, number]> = {
+  common: [0.88, 1.12],
+  runner: [1.02, 1.2],
+  tank: [0.94, 1.06],
+}
 
 /** 被挡住时侧向绕行的偏转角（约 70°） */
 const DETOUR_ANGLE = 1.2
@@ -119,31 +142,63 @@ export function createEnemies(ctx: GameContext): EnemySystem {
   let spawnGap = 0
   let nextId = 1
   let frame = 0
-  /** 全场低吼与攻击音效的节流计时 */
+  /** 全场低吼、发现、攻击与中弹音效的节流计时 */
   let groanGap = 0
+  let alertSfxGap = 0
   let attackSfxGap = 0
+  let hurtSfxGap = 0
 
   const tmpDir = new Vector3()
   const tmpTo = new Vector3()
   const hit: RayHit = { distance: 0, point: new Vector3(), normal: new Vector3(), kind: 'enemy', headshot: false }
   const anim: HumanoidAnimInput = { speed: 0, pose: 'stand', action: 'none', actionProgress: 0 }
-  const sfx: SfxOptions = { volume: 1, rate: 1 }
+  /** 音效参数与发声位置：audio.play 同步读取，可以复用 */
+  const sfxPos = new Vector3()
+  const sfx: SfxOptions = { position: sfxPos, volume: 1, rate: 1 }
 
   /* ── 音效 ── */
 
-  /** 在丧尸所在位置播放音效（复用同一个参数对象，带少量变调） */
-  const playAt = (id: SfxId, z: Zombie, volume: number): void => {
-    sfx.position = z.position
+  /** 丧尸到主控（听者）的水平距离平方 */
+  const listenerDistSq = (z: Zombie): number => distXZSq(z.position, ctx.player.actor.position)
+
+  /**
+   * 在丧尸所在位置播放音效（复用同一个参数对象，带少量变调）。
+   * @param voice true：叫声，从嘴部发出并带上这只丧尸的嗓音音高；false：脚步等，从脚底发出
+   */
+  const playAt = (id: SfxId, z: Zombie, volume: number, voice: boolean): void => {
+    const p = z.position
+    sfxPos.set(p.x, voice ? p.y + z.height * TUNE.mouthRatio * z.holder.scale.y : p.y, p.z)
     sfx.volume = volume
-    sfx.rate = noise.range(0.92, 1.08)
+    sfx.rate = noise.range(0.93, 1.07) * (voice ? z.voicePitch : 1)
     ctx.audio.play(id, sfx)
   }
 
-  /** 低吼（受全场节流约束；force 用于 tank 登场） */
-  const groan = (z: Zombie, volume: number, force: boolean): void => {
-    if (!force && groanGap > 0) return
-    playAt(GROAN_SFX[z.type], z, volume)
-    groanGap = noise.range(TUNE.groanGapMin, TUNE.groanGapMax)
+  /** 低吼（tank 登场时 force，无视全场间隔）。返回是否真的触发了 */
+  const groan = (z: Zombie, volume: number, force: boolean): boolean => {
+    const distSq = listenerDistSq(z)
+    if (!force && distSq > TUNE.hearRange * TUNE.hearRange) return false
+    // 近处的丧尸各吼各的；远处的共享全场间隔，避免满场同时哼成一片
+    const near = distSq <= TUNE.groanNear * TUNE.groanNear
+    if (!force && !near && groanGap > 0) return false
+    playAt(GROAN_SFX[z.type], z, volume, true)
+    if (!near) groanGap = noise.range(TUNE.groanGapMin, TUNE.groanGapMax)
+    return true
+  }
+
+  /** 下一次低吼的间隔（runner 的嘶叫更稀） */
+  const nextGroan = (z: Zombie): number =>
+    noise.range(TUNE.groanMin, TUNE.groanMax) * (z.type === 'runner' ? TUNE.runnerGroanScale : 1)
+
+  /** 首次在 alertRange 内锁定目标：发出“发现”嘶吼（每只每次刷出只一次） */
+  const alert = (z: Zombie, target: Combatant): void => {
+    if (z.alerted) return
+    if (distXZSq(z.position, target.position) > TUNE.alertRange * TUNE.alertRange) return
+    z.alerted = true
+    if (alertSfxGap > 0 || listenerDistSq(z) > TUNE.hearRange * TUNE.hearRange) return
+    playAt(ALERT_SFX[z.type], z, 1, true)
+    alertSfxGap = TUNE.alertSfxGap
+    // 刚吼完别紧接着再哼一声
+    z.groanTimer = Math.max(z.groanTimer, noise.range(2, 3.5))
   }
 
   /* ── 对象池 ── */
@@ -260,9 +315,13 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     z.wandering = false
     z.wanderTimer = 0
     z.wanderScale = 0
-    z.stride = 0
+    z.stride = noise.range(0, STEP_SFX[type].stride)
     z.deathTimer = 0
-    z.groanTimer = noise.range(TUNE.groanMin, TUNE.groanMax)
+    z.groanTimer = nextGroan(z) * noise.range(0.3, 1)
+    z.alerted = false
+    z.hurtGap = 0
+    const [pitchMin, pitchMax] = VOICE_PITCH[type]
+    z.voicePitch = noise.range(pitchMin, pitchMax)
 
     const pos = z.position
     pos.set(
@@ -424,7 +483,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     z.moveScale = 0
     // tank 的砸地声在击中瞬间播；其余在出手时播，并做全场节流
     if (z.type !== 'tank' && attackSfxGap <= 0) {
-      playAt(ATTACK_SFX[z.type], z, 0.9)
+      playAt(ATTACK_SFX[z.type], z, 1, true)
       attackSfxGap = TUNE.attackSfxGap
     }
   }
@@ -441,6 +500,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
       z.retargetTimer = TUNE.retargetInterval * noise.range(0.8, 1.2)
     }
     const target = z.target
+    if (target !== null && !z.alerted) alert(z, target)
 
     if (z.type === 'runner') {
       // 每满 1 秒掷一次：触发约 0.5 秒的左右横向摆动
@@ -491,7 +551,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
 
   /** 前摇结束的结算：目标仍在范围内且够得着才造成伤害；tank 附带击退 */
   const strike = (z: Zombie): void => {
-    if (z.type === 'tank') playAt(ATTACK_SFX.tank, z, 1)
+    if (z.type === 'tank') playAt(ATTACK_SFX.tank, z, 1, false)
     const target = z.target
     if (target === null || target.status !== 'alive') return
     const dx = target.position.x - z.position.x
@@ -533,6 +593,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     if (z.staggerGap > 0) z.staggerGap -= dt
     if (z.dodgeTimer > 0) z.dodgeTimer -= dt
     if (z.detourTimer > 0) z.detourTimer -= dt
+    if (z.hurtGap > 0) z.hurtGap -= dt
 
     let speed = 0
     if (z.state === 'attack') {
@@ -561,12 +622,13 @@ export function createEnemies(ctx: GameContext): EnemySystem {
       z.intended = speed * dt
       if (dirX !== 0 || dirZ !== 0) z.wantYaw = yawOf(dirX, dirZ)
 
-      if (z.type === 'tank') {
-        z.stride += z.intended
-        if (z.stride >= TUNE.tankStride) {
-          z.stride = 0
-          playAt('tank_step', z, 0.7)
-        }
+      // 脚步：按走过的距离触发；游荡时步子轻一些。远处的不发（tank 的脚步传得更远）
+      const step = STEP_SFX[z.type]
+      z.stride += z.intended
+      if (z.stride >= step.stride) {
+        z.stride -= step.stride
+        const range = z.type === 'tank' ? TUNE.hearRange : TUNE.stepHearRange
+        if (listenerDistSq(z) <= range * range) playAt(step.id, z, step.volume * (0.6 + 0.4 * z.moveScale), false)
       }
     }
     z.animSpeed = damp(z.animSpeed, speed, TUNE.animRate, dt)
@@ -672,8 +734,10 @@ export function createEnemies(ctx: GameContext): EnemySystem {
 
     z.groanTimer -= dt
     if (z.groanTimer <= 0) {
-      z.groanTimer = noise.range(TUNE.groanMin, TUNE.groanMax)
-      groan(z, z.target === null ? 0.8 : 0.6, false)
+      // 被全场间隔挡住或听不见时稍后再试，而不是白白等一整个低吼周期
+      z.groanTimer = groan(z, z.state === 'attack' ? 0.8 : 1, false)
+        ? nextGroan(z)
+        : noise.range(TUNE.groanRetryMin, TUNE.groanRetryMax)
     }
   }
 
@@ -691,7 +755,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     dying.push(z)
     if (waveActive && z.waveSerial === waveSerial) waveKilled += 1
 
-    playAt(DEATH_SFX[z.type], z, 1)
+    playAt(DEATH_SFX[z.type], z, 1, true)
     // 丧尸的 position 会随对象池复用，事件与贴花拿一份拷贝
     const where = z.position.clone()
     ctx.effects.bloodDecal(where)
@@ -826,6 +890,13 @@ export function createEnemies(ctx: GameContext): EnemySystem {
       kill(enemy, info)
       return
     }
+    // 中弹闷哼：单只与全场都有间隔，扫射时不会连成一片；被打了也就算“发现”了
+    enemy.alerted = true
+    if (enemy.hurtGap <= 0 && hurtSfxGap <= 0) {
+      playAt(HURT_SFX[enemy.type], enemy, 0.9, true)
+      enemy.hurtGap = noise.range(TUNE.hurtGapMin, TUNE.hurtGapMax)
+      hurtSfxGap = TUNE.hurtSfxGap
+    }
     // 极短的受击停顿（tank 不吃）；带最小间隔，连射不会把它钉死
     if (enemy.type !== 'tank' && enemy.staggerGap <= 0) {
       enemy.staggerTimer = TUNE.hitStagger
@@ -876,7 +947,9 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     if (dt <= 0) return
     frame += 1
     if (groanGap > 0) groanGap -= dt
+    if (alertSfxGap > 0) alertSfxGap -= dt
     if (attackSfxGap > 0) attackSfxGap -= dt
+    if (hurtSfxGap > 0) hurtSfxGap -= dt
 
     updateStages(dt)
     updateSpawning(dt)

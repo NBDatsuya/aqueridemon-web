@@ -1,15 +1,16 @@
 /**
- * 直升机舱内：客舱（防滑地板、隔框与桁条、线缆、三联帆布座椅与安全带、隔板上的救援器材、红色舱灯）
+ * 直升机舱内：客舱（防滑地板、隔框与桁条、线缆、四联帆布座椅与安全带、隔板上的救援器材、红色舱灯）
  * 与驾驶舱（仪表板、中央操纵台、顶部开关板、两名飞行员及座椅、操纵杆）。
  * 坐标在机体系（见 helicopter-layout.ts）。
  *
- * 视野约束：座位锚点在机体系 (-0.7, 0.35, CABIN_Z)，主控登机后相机就在这里并且可以环顾。
+ * 视野约束：主控相机锚点在机体系 (-0.7, 0.35, troopSeatZ(PLAYER_SEAT))，主控登机后相机就在这里并且可以环顾。
+ * 其余座位坐着 AI 队友。
  * 所以锚点周围 0.3m 内不放任何零件，锚点与 +X 侧舱门洞口之间、舱门上沿连线以下也不放东西。
  */
 
 import type { Vec3 } from './helicopter-airdrop-kit'
 import { THETA, hullNormal, hullSurface, thetaAtHeight } from './helicopter-hull'
-import { CABIN_Z, DOOR_Z0, DOOR_Z1, FLOOR_Y, TINT, WALL } from './helicopter-layout'
+import { CABIN_Z, DOOR_Z0, DOOR_Z1, FLOOR_Y, TINT, TROOP_SEATS, WALL, troopSeatZ } from './helicopter-layout'
 import type { HeliBuilders } from './helicopter-layout'
 
 const HALF_PI = Math.PI / 2
@@ -142,17 +143,18 @@ function buildWiring(s: HeliBuilders): void {
   )
 }
 
-/** -X 侧面向舱门的三联帆布座椅：钢管骨架、坐垫、靠背、肩带与腰带 */
+/** -X 侧面向舱门的联排帆布座椅（座位数见 TROOP_SEATS）：钢管骨架、坐垫、靠背、肩带与腰带 */
 function buildTroopSeats(s: HeliBuilders): void {
   const panY = FLOOR_Y + 0.43
   const topY = FLOOR_Y + 1.02
   const frontX = -0.63
   const rearX = -1.08
-  const z0 = -0.7
-  const z1 = 1.1
-  const pitch = 0.6
+  const { z0, z1, pitch, count } = TROOP_SEATS
+  /** 单个座位沿 z 的宽度 */
+  const width = pitch - 0.04
+  const half = width / 2
 
-  // 骨架：三根纵向管 + 四组立柱与斜撑
+  // 骨架：三根纵向管 + 每两个座位之间一组立柱与斜撑
   s.steel.tint(TINT.steelDark)
   const rail = (x: number, y: number): void => {
     s.steel.tube(
@@ -167,31 +169,31 @@ function buildTroopSeats(s: HeliBuilders): void {
   rail(frontX, panY)
   rail(rearX, panY)
   rail(rearX, topY)
-  for (let k = 0; k < 4; k++) {
-    const z = z0 + 0.02 + ((z1 - z0 - 0.04) * k) / 3
+  for (let k = 0; k <= count; k++) {
+    const z = z0 + 0.02 + ((z1 - z0 - 0.04) * k) / count
     s.steel.rod([frontX, FLOOR_Y, z], [frontX, panY, z], 0.012, 0.012, 6)
     s.steel.rod([rearX, FLOOR_Y, z], [rearX, topY, z], 0.012, 0.012, 6)
     s.steel.rod([frontX, panY - 0.02, z], [rearX, FLOOR_Y + 0.08, z], 0.009, 0.009, 5)
   }
 
-  for (let seat = 0; seat < 3; seat++) {
-    const z = z0 + 0.3 + seat * pitch
+  for (let seat = 0; seat < count; seat++) {
+    const z = troopSeatZ(seat)
     // 坐垫与靠背
     s.fabric.tint(TINT.seat)
-    s.fabric.box(0.44, 0.03, 0.54, -0.845, panY + 0.004, z)
-    s.fabric.box(0.03, 0.56, 0.54, -1.05, FLOOR_Y + 0.74, z)
+    s.fabric.box(0.44, 0.03, width, -0.845, panY + 0.004, z)
+    s.fabric.box(0.03, 0.56, width, -1.05, FLOOR_Y + 0.74, z)
     s.fabric.tint(TINT.seatDark)
-    s.fabric.box(0.38, 0.035, 0.46, -0.83, panY + 0.03, z)
+    s.fabric.box(0.38, 0.035, width - 0.08, -0.83, panY + 0.03, z)
     // 靠背上的两道加固缝带
-    s.fabric.box(0.006, 0.03, 0.54, -1.033, FLOOR_Y + 0.56, z)
-    s.fabric.box(0.006, 0.03, 0.54, -1.033, FLOOR_Y + 0.92, z)
+    s.fabric.box(0.006, 0.03, width, -1.033, FLOOR_Y + 0.56, z)
+    s.fabric.box(0.006, 0.03, width, -1.033, FLOOR_Y + 0.92, z)
 
     // 肩带（挂在靠背上）与腰带（搭在坐垫上），中间是带扣
     s.fabric.tint(TINT.belt)
     for (const side of [-1, 1]) {
       s.fabric.box(0.006, 0.5, 0.045, -1.031, FLOOR_Y + 0.75, z + side * 0.1)
-      s.fabric.box(0.045, 0.006, 0.19, -0.9, panY + 0.05, z + side * 0.125)
-      s.fabric.box(0.045, 0.07, 0.006, -0.9, panY + 0.018, z + side * 0.222)
+      s.fabric.box(0.045, 0.006, half - 0.06, -0.9, panY + 0.05, z + side * (half / 2 - 0.005))
+      s.fabric.box(0.045, 0.07, 0.006, -0.9, panY + 0.018, z + side * (half - 0.02))
     }
     s.steel.tint(TINT.steel)
     s.steel.box(0.06, 0.014, 0.065, -0.9, panY + 0.054, z)
@@ -200,11 +202,11 @@ function buildTroopSeats(s: HeliBuilders): void {
 
   // 座椅下方塞着的两只器材箱
   s.paint.tint(TINT.hullDark)
-  s.paint.box(0.34, 0.2, 0.44, -0.86, FLOOR_Y + 0.1, z0 + 0.3)
-  s.paint.box(0.34, 0.24, 0.4, -0.86, FLOOR_Y + 0.12, z0 + 0.3 + pitch * 2)
+  s.paint.box(0.34, 0.2, 0.4, -0.86, FLOOR_Y + 0.1, troopSeatZ(0))
+  s.paint.box(0.34, 0.24, 0.38, -0.86, FLOOR_Y + 0.12, troopSeatZ(count - 1))
   s.steel.tint(TINT.steel)
-  s.steel.box(0.012, 0.03, 0.08, -0.686, FLOOR_Y + 0.13, z0 + 0.3)
-  s.steel.box(0.012, 0.03, 0.08, -0.686, FLOOR_Y + 0.17, z0 + 0.3 + pitch * 2)
+  s.steel.box(0.012, 0.03, 0.08, -0.686, FLOOR_Y + 0.13, troopSeatZ(0))
+  s.steel.box(0.012, 0.03, 0.08, -0.686, FLOOR_Y + 0.17, troopSeatZ(count - 1))
 }
 
 /** 前后隔板上的器材：急救箱、灭火器、机内通话盒、折叠担架、救援绳 */

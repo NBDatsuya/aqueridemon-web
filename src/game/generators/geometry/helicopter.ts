@@ -22,7 +22,21 @@ import { enableShadows } from './helicopter-airdrop-kit'
 import { CABIN_LAMP, buildCabin } from './helicopter-cabin'
 import { getHullOverlayTexture, getLightAtlasTexture, getRotorBlurTexture } from './helicopter-decals'
 import { buildCowl, buildDoor, buildHull } from './helicopter-hull'
-import { DOOR_POINT, DOOR_POP, DOOR_SLIDE, HULL_Y, ROTOR_RADIUS, ROTOR_Y, SEAT, TAIL_ROTOR, createBuilders } from './helicopter-layout'
+import {
+  DOOR_POINT,
+  DOOR_POP,
+  DOOR_SLIDE,
+  HULL_Y,
+  PLAYER_SEAT,
+  ROTOR_RADIUS,
+  ROTOR_Y,
+  SEAT,
+  SEAT_PAN,
+  TAIL_ROTOR,
+  TROOP_SEATS,
+  createBuilders,
+  troopSeatZ,
+} from './helicopter-layout'
 import type { HeliBuilders } from './helicopter-layout'
 import { buildFittings, buildMainRotor, buildSkids, buildTail, buildTailRotor } from './helicopter-parts'
 
@@ -92,7 +106,8 @@ function geometries(): SharedGeometries {
 
 /**
  * 创建救援直升机模型。
- * @returns 直升机绑定：root 原点在滑橇底部中心，机头朝本地 +Z；seat 为舱内座位锚点，doorPoint 为 +X 侧舱门外地面上的登机点
+ * @returns 直升机绑定：root 原点在滑橇底部中心，机头朝本地 +Z；seat 为主控相机锚点，seats 为各座位的坐姿锚点，
+ *   doorPoint 为 +X 侧舱门外地面上的登机点
  */
 export function createHelicopter(): HelicopterRig {
   const geo = geometries()
@@ -265,12 +280,23 @@ export function createHelicopter(): HelicopterRig {
 
   /* ── 锚点 ── */
 
-  // 座位：按模型约定让锚点的本地 +Z 朝向舱门（+X）
+  // 主控相机锚点：按模型约定让锚点的本地 +Z 朝向舱门（+X）
   const seat = new Object3D()
   seat.name = 'helicopter-seat'
   seat.position.set(SEAT.x, SEAT.y, SEAT.z)
   seat.rotation.y = Math.PI / 2
   root.add(seat)
+
+  // 各座位的坐姿锚点：原点在骨盆落座处，本地 +Z 同样朝向舱门
+  const seats: Object3D[] = []
+  for (let i = 0; i < TROOP_SEATS.count; i++) {
+    const anchor = new Object3D()
+    anchor.name = `helicopter-seat-${i}`
+    anchor.position.set(SEAT_PAN.x, SEAT_PAN.y, troopSeatZ(i))
+    anchor.rotation.y = Math.PI / 2
+    root.add(anchor)
+    seats.push(anchor)
+  }
 
   const doorPoint = new Object3D()
   doorPoint.name = 'helicopter-door-point'
@@ -295,6 +321,8 @@ export function createHelicopter(): HelicopterRig {
   return {
     root,
     seat,
+    seats,
+    playerSeat: PLAYER_SEAT,
     doorPoint,
 
     update(dt, anim: HelicopterAnimInput) {

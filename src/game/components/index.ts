@@ -1,5 +1,4 @@
 export { default as CheatWindow } from './cheat-window.vue'
 export { default as GameHud } from './game-hud.vue'
-export { default as WeaponSelect } from './weapon-select.vue'
 export { default as WeaponReplace } from './weapon-replace.vue'
 export { default as EndingScreen } from './ending-screen.vue'

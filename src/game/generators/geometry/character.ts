@@ -37,32 +37,32 @@ const STYLES: Record<CharacterId, CharacterStyle> = {
 const EYE_COLOR = 0x16181c
 /** Football Master 的球袜 */
 const SOCK_COLOR = 0xf08a3c
+/** Samuel 的腰带 */
+const BELT_COLOR = 0x26221f
 
-/** 脸：两只深色小方块眼睛，让正面朝向一眼可辨 */
+/** 脸：一对深色椭圆眼睛（一个网格），让正面朝向一眼可辨 */
 function addEyes(rig: HumanoidBuild, look: HumanoidLook): void {
-  const r = rig.dims.headRadius
-  const left = rig.addMesh(rig.parts.head, 'box', look)
-  left.scale.set(r * 0.2, r * 0.13, r * 0.1)
-  left.position.set(r * 0.36, r * 0.12, r * 0.9)
-  const right = rig.addMesh(rig.parts.head, 'box', look)
-  right.scale.copy(left.scale)
-  right.position.set(-r * 0.36, r * 0.12, r * 0.9)
+  const eyes = rig.addMesh(rig.parts.head, 'eyes', look)
+  eyes.scale.setScalar(rig.dims.headRadius)
+  eyes.castShadow = false
 }
 
-/** 头发：比头略大、向后上方偏移的球，盖住头顶与后脑，露出脸 */
+/** 头发：比头略大、向后上方偏移的扁球，盖住头顶与后脑，露出脸 */
 function addHair(rig: HumanoidBuild, look: HumanoidLook, size: number): void {
   const r = rig.dims.headRadius
   const cap = rig.addMesh(rig.parts.head, 'sphere', look)
-  cap.scale.setScalar(r * size)
-  cap.position.set(0, r * 0.14, -r * 0.16)
+  cap.scale.set(r * size * 0.95, r * size, r * size)
+  cap.position.set(0, r * 0.16, -r * 0.16)
 }
 
-/** 衣领：躯干顶部的一圈色带 */
+/** 衣领：围在脖子根部的一圈立领 */
 function addCollar(rig: HumanoidBuild, look: HumanoidLook): void {
   const d = rig.dims
-  const collar = rig.addMesh(rig.parts.torso, 'box', look)
-  collar.scale.set(d.torsoWidth * 0.56, 0.05, d.torsoDepth + 0.012)
-  collar.position.set(0, d.torsoHeight - 0.015, 0)
+  const r = d.headRadius
+  const collar = rig.addMesh(rig.parts.torso, 'band', look)
+  collar.scale.set(r * 0.62, 0.05, r * 0.58)
+  collar.position.set(0, d.torsoHeight + 0.03, 0)
+  collar.castShadow = false
 }
 
 /**
@@ -72,9 +72,10 @@ function addCollar(rig: HumanoidBuild, look: HumanoidLook): void {
  */
 function addArmBand(rig: HumanoidBuild, side: 'L' | 'R', look: HumanoidLook, at: number, width: number): void {
   const d = rig.dims
-  const band = rig.addMesh(side === 'L' ? rig.parts.upperArmL : rig.parts.upperArmR, 'limb', look)
-  band.scale.set(d.armRadius * 1.14, width, d.armRadius * 1.14)
+  const band = rig.addMesh(side === 'L' ? rig.parts.upperArmL : rig.parts.upperArmR, 'band', look)
+  band.scale.set(d.armRadius * 1.02, width, d.armRadius * 1.02)
   band.position.set(0, -d.upperArm * at, 0)
+  band.castShadow = false
 }
 
 /**
@@ -89,7 +90,7 @@ export function createCharacter(id: CharacterId): HumanoidRig {
   const wide = def.bodyScale
   const tall = style.height / 1.8
 
-  const skin: HumanoidLook = { color: def.headColor, roughness: 0.75 }
+  const skin: HumanoidLook = { color: def.headColor, roughness: 0.62 }
   const top: HumanoidLook = { color: def.bodyColor, map: cloth, roughness: 0.9 }
   const legs: HumanoidLook = { color: def.legColor, map: cloth, roughness: 0.9 }
   const shoe: HumanoidLook = { color: style.shoe, roughness: 0.8 }
@@ -128,6 +129,11 @@ export function createCharacter(id: CharacterId): HumanoidRig {
     addCollar(rig, accent)
     addArmBand(rig, 'L', accent, 0.7, 0.04)
     addArmBand(rig, 'R', accent, 0.7, 0.04)
+    // 腰带：第一人称低头时能看到的裤腰
+    const belt = rig.addMesh(rig.parts.body, 'band', { color: BELT_COLOR, roughness: 0.55 })
+    belt.scale.set(d.torsoWidth * 0.47, 0.036, d.torsoDepth * 0.5)
+    belt.position.set(0, 0.052, 0)
+    belt.castShadow = false
   } else if (id === 'football') {
     addHair(rig, hair, 1.04)
     // 左臂队长袖标
@@ -144,25 +150,27 @@ export function createCharacter(id: CharacterId): HumanoidRig {
     tail.rotation.x = 0.42
     // 浅蓝衣领与裙摆
     addCollar(rig, legs)
-    const skirt = rig.addMesh(rig.parts.body, 'box', legs)
-    skirt.scale.set(d.torsoWidth * 1.12, 0.2, d.torsoDepth * 1.25)
-    skirt.position.set(0, -0.08, 0)
+    // 裙摆：围在骨盆外的一圈短筒
+    const skirt = rig.addMesh(rig.parts.body, 'band', legs)
+    skirt.scale.set(d.torsoWidth * 0.57, 0.21, d.torsoDepth * 0.64)
+    skirt.position.set(0, 0.03, 0)
   } else {
     // 兜帽：罩住头顶、两侧与后脑，前面只露出眼睛一带
     const hood = rig.addMesh(rig.parts.head, 'sphere', top)
-    hood.scale.set(r * 1.17, r * 1.15, r * 1.2)
-    hood.position.set(0, r * 0.1, -r * 0.3)
-    // 口罩：贴在脸下半部的薄盒
+    hood.scale.set(r * 1.1, r * 1.17, r * 1.2)
+    hood.position.set(0, r * 0.12, -r * 0.3)
+    // 口罩：盖住脸下半部与鼻子
     const mask = rig.addMesh(rig.parts.head, 'box', accent)
-    mask.scale.set(r * 1.3, r * 0.6, r * 0.5)
-    mask.position.set(0, -r * 0.32, r * 0.72)
+    mask.scale.set(r * 1.22, r * 0.62, r * 0.84)
+    mask.position.set(0, -r * 0.33, r * 0.76)
     // 垂在颈后的帽兜与腹部口袋
     const drape = rig.addMesh(rig.parts.torso, 'box', top)
     drape.scale.set(d.torsoWidth * 0.62, 0.11, 0.07)
-    drape.position.set(0, d.torsoHeight, -d.torsoDepth / 2 - 0.015)
+    drape.position.set(0, d.torsoHeight, -d.torsoDepth * 0.4)
     const pocket = rig.addMesh(rig.parts.torso, 'box', accent)
     pocket.scale.set(d.torsoWidth * 0.6, 0.12, 0.02)
-    pocket.position.set(0, d.torsoHeight * 0.3, d.torsoDepth / 2 + 0.006)
+    pocket.position.set(0, d.torsoHeight * 0.3, d.torsoDepth * 0.48 + 0.008)
+    pocket.castShadow = false
   }
 
   return rig

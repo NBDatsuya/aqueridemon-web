@@ -13,12 +13,11 @@
       <div v-if="hud.phase === 'wave'" class="game-hud__wave">
         第 {{ hud.wave }} 波 · 击杀 {{ hud.waveKilled }}/{{ hud.waveTotal }}
       </div>
-      <div v-if="hud.timer >= 0" class="game-hud__wave">下一波 {{ hud.timer }} 秒后开始</div>
       <div class="game-hud__objective">{{ hud.objective }}</div>
     </div>
 
     <!-- 顶部中央：回合、击杀、计时、剩余 NPC -->
-    <div v-if="hud.phase !== 'select' && hud.phase !== 'ending'" class="game-hud__top-center">
+    <div v-if="hud.phase !== 'ending'" class="game-hud__top-center">
       <div class="game-hud__round">{{ roundLabel }}</div>
       <div class="game-hud__stats">
         <span class="game-hud__stat"><b>{{ hud.kills }}</b><i>当前分数</i></span>
@@ -134,6 +133,9 @@
       </div>
     </div>
 
+    <!-- 指针未锁定：提示点一下画面接管鼠标（开局没有菜单，进游戏时通常还没锁定） -->
+    <div v-if="showLockHint" class="game-hud__lock-hint">点击画面锁定鼠标</div>
+
     <!-- 字幕 -->
     <TransitionGroup name="subtitle" tag="div" class="game-hud__subtitles">
       <div v-for="s in hud.subtitles" :key="s.id" class="game-hud__subtitle">
@@ -188,7 +190,17 @@ import { formatTime } from '../utils/math'
 const teammates = computed(() => hud.squad.filter((m) => !m.isPlayer))
 const aimTarget = computed(() => hud.aimTarget)
 const lowHp = computed(() => hud.status === 'alive' && hud.hp <= 30)
-const showCrosshair = computed(() => hud.status === 'alive' && hud.phase !== 'select' && hud.phase !== 'ending')
+const showCrosshair = computed(() => hud.status === 'alive' && hud.phase !== 'ending')
+/** 指针还没锁定时提示玩家点一下画面；暂停菜单、换枪界面与结局界面自己会接管点击 */
+const showLockHint = computed(
+  () =>
+    !hud.locked &&
+    hud.status === 'alive' &&
+    hud.phase !== 'ending' &&
+    !hud.paused &&
+    !hud.cheatOpen &&
+    hud.weaponChoice === null,
+)
 /** 准星开合（像素）随散布变化 */
 const crossGap = computed(() => 4 + hud.spread * 520)
 const activeWeapon = computed(() => hud.weapons.find((w) => w.active))
@@ -631,6 +643,12 @@ function mateState(m: HudSquadMember): string {
 
 .game-hud__interact-text {
   @apply rounded bg-slate-950/60 px-4 py-1.5 text-base font-semibold text-amber-200;
+}
+
+/* ── 指针锁定提示 ── */
+.game-hud__lock-hint {
+  @apply absolute top-[68%] left-1/2 -translate-x-1/2 rounded bg-slate-950/70 px-4 py-1.5 text-sm font-semibold tracking-wider text-slate-200;
+  animation: hud-pulse 1.6s ease-in-out infinite;
 }
 
 /* ── 字幕 ── */

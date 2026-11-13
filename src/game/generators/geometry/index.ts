@@ -8,10 +8,12 @@ import { createAirdrop } from './airdrop'
 import { createBossRig } from './boss'
 import { createCharacter } from './character'
 import { createHelicopter } from './helicopter'
+import { createMedkitCrate } from './medkit-crate'
 import { createWeapon } from './weapon'
+import { createWeaponCrate } from './weapon-crate'
 import { createZombie } from './zombie'
 
-/** 角色 / 敌人 / 武器 / Boss / 直升机 / 空投箱的程序化模型工厂 */
+/** 角色 / 敌人 / 武器 / Boss / 直升机 / 空投箱 / 主武器箱 / 医疗包箱的程序化模型工厂 */
 export const actorModels: ActorModels = {
   createCharacter,
   createZombie,
@@ -19,4 +21,6 @@ export const actorModels: ActorModels = {
   createBoss: createBossRig,
   createHelicopter,
   createAirdrop,
+  createWeaponCrate,
+  createMedkitCrate,
 }

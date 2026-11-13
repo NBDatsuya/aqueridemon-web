@@ -1,5 +1,6 @@
 /**
- * 程序化音频系统入口。全部声音用 Web Audio API 合成，不加载任何音频文件。
+ * 程序化音频系统入口。声音用 Web Audio API 合成，不加载常规音频文件；
+ * 唯一例外是预生成的语音播报（阿里云百炼 Qwen-Audio-TTS 离线合成后放入 public/audio/）。
  *
  * 信号流：
  *   一次性音效（预渲染 AudioBuffer）─┬→ sfx 总线 ─┐
@@ -17,12 +18,22 @@ import { clamp, invLerp, smoothstep } from '../../utils/math'
 import { createRng, hashSeed } from '../../utils/random'
 import type { AmbientLoops } from './ambient'
 import { createAmbient } from './ambient'
+import { createImpulse } from './impulse'
 import type { MusicPlayer } from './music'
 import { createMusic } from './music'
+import type { SfxGroup } from './sfx-bank'
 import { SFX, SFX_IDS } from './sfx-bank'
 
 /** 同时发声的一次性音效上限 */
-const MAX_VOICES = 20
+const MAX_VOICES = 28
+/** 各发声分组的同时发声上限：丧尸最多 8 个声音，满了顶掉最轻（通常最远）的那个 */
+const GROUP_VOICES: Record<SfxGroup, number> = { zombie: 8 }
+/** 空气吸收：超过该距离（米）开始压高频 */
+const AIR_START = 10
+/** 每多出这么远（米），低通截止频率减半一次左右 */
+const AIR_SPAN = 12
+/** 贴身（水平距离小于该值，米）的声音不做方位处理 */
+const SPATIAL_MIN = 0.4
 /** sfx 总线在音量 1 时的增益 */
 const SFX_GAIN = 0.9
 /** music 总线在音量 1 时的增益 */
@@ -35,6 +46,11 @@ const MUFFLE_WET = 0.22
 const PAN_WIDTH = 0.85
 /** 预渲染时每段连续占用主线程的时间（毫秒），超过就让出一帧 */
 const SLICE_MS = 6
+
+/** 外部语音资源（SfxId → public 下的路径），由 Qwen-Audio-TTS 离线预生成 */
+const VOICE_ASSETS: ReadonlyArray<readonly [id: SfxId, url: string]> = [
+  ['voice_headshot_kill', 'audio/headshot-kill.wav'],
+]
 
 interface AudioGraph {
   ctx: AudioContext
@@ -55,6 +71,7 @@ interface AudioGraph {
 
 interface Voice {
   id: SfxId
+  group: SfxGroup | undefined
   source: AudioBufferSourceNode
   gain: GainNode
   nodes: AudioNode[]
@@ -80,34 +97,13 @@ function distortionCurve(amount: number) {
   return curve
 }
 
-/** 混响冲激响应：指数衰减的噪声（高频衰减更快）+ 两次早期反射，模拟空旷的球场 */
-function createImpulse(ctx: BaseAudioContext): AudioBuffer {
-  const sr = ctx.sampleRate
-  const length = Math.floor(sr * 1.6)
-  const buffer = ctx.createBuffer(2, length, sr)
-  const rng = createRng(hashSeed('cis2-reverb'))
-  for (let ch = 0; ch < 2; ch++) {
-    const data = buffer.getChannelData(ch)
-    let low = 0
-    for (let i = 0; i < length; i++) {
-      const t = i / sr
-      const smoothing = 0.25 + 0.6 * Math.min(1, t / 0.8)
-      low += (rng.next() * 2 - 1 - low) * (1 - smoothing)
-      data[i] = low * Math.exp(-t / 0.32)
-    }
-    const reflections = [0.061 + ch * 0.007, 0.113 - ch * 0.005]
-    reflections.forEach((time, i) => {
-      const index = Math.floor(time * sr)
-      if (index < length) data[index] = (data[index] as number) + (i === 0 ? 0.6 : 0.4)
-    })
-  }
-  return buffer
-}
-
-/** 距离衰减：参考距离内不衰减，之后按反比衰减，并在接近最大距离时平滑归零 */
-function attenuation(distance: number, refDistance: number, maxDistance: number): number {
+/**
+ * 距离衰减：参考距离内不衰减，之后按 ref / (ref + rolloff × (d − ref)) 衰减（rolloff 为 1 时就是反比），
+ * 并在接近最大距离时平滑归零
+ */
+function attenuation(distance: number, refDistance: number, maxDistance: number, rolloff: number): number {
   if (distance <= refDistance) return 1
-  const inverse = refDistance / distance
+  const inverse = refDistance / (refDistance + rolloff * (distance - refDistance))
   const edge = 1 - smoothstep(invLerp(maxDistance * 0.6, maxDistance, distance))
   return inverse * edge
 }
@@ -211,14 +207,16 @@ export function createAudio(): AudioSystem {
 
   /* ── 预渲染 ── */
 
-  /** 取某个音效变体的 AudioBuffer；还没渲染就当场渲染并缓存 */
+  /** 取某个音效变体的 AudioBuffer；还没渲染就当场渲染并缓存。外部条目只认已加载的资源 */
   const bufferFor = (g: AudioGraph, id: SfxId, variant: number): AudioBuffer | null => {
     const key = `${id}#${variant}`
     const cached = buffers.get(key)
     if (cached) return cached
+    const def = SFX[id]
+    if (!def || def.external || !def.render) return null
     try {
       const sr = g.ctx.sampleRate
-      const rendered = SFX[id].render(sr, createRng(hashSeed(key)), variant)
+      const rendered = def.render(sr, createRng(hashSeed(key)), variant)
       const channels = Array.isArray(rendered) ? rendered : [rendered]
       const first = channels[0]
       if (!first) return null
@@ -238,6 +236,7 @@ export function createAudio(): AudioSystem {
     const run = async (): Promise<void> => {
       let sliceStart = performance.now()
       for (const id of SFX_IDS) {
+        if (SFX[id]?.external) continue
         for (let variant = 0; variant < SFX[id].variants; variant++) {
           if (mine !== epoch) return
           bufferFor(g, id, variant)
@@ -250,6 +249,23 @@ export function createAudio(): AudioSystem {
     }
     prerender = run()
     return prerender
+  }
+
+  /** 加载预生成的语音资源；资源缺失或解码失败时对应播报保持静默 */
+  const loadExternalVoices = async (g: AudioGraph): Promise<void> => {
+    const base = import.meta.env.BASE_URL
+    await Promise.all(
+      VOICE_ASSETS.map(async ([id, url]) => {
+        try {
+          const res = await fetch(`${base}${url}`)
+          if (!res.ok) return
+          const data = await res.arrayBuffer()
+          buffers.set(`${id}#0`, await g.ctx.decodeAudioData(data))
+        } catch {
+          // 静默跳过：只有普通命中音效
+        }
+      }),
+    )
   }
 
   /* ── 状态应用 ── */
@@ -306,18 +322,24 @@ export function createAudio(): AudioSystem {
       const now = g.ctx.currentTime
       let loudness = clamp(options?.volume ?? 1, 0, 4)
       let pan = 0
+      let distance = 0
+      /** 声源在听者坐标系里的位置（右 +X、上 +Y、前 −Z），给 HRTF 用 */
+      let spatial = false
+      let localX = 0
+      let localY = 0
+      let localZ = 0
 
-      // 距离衰减与左右声像
+      // 距离衰减与方位
       const position = options?.position
       if (position) {
         const dx = position.x - listenerX
         const dy = position.y - listenerY
         const dz = position.z - listenerZ
-        const distance = Math.hypot(dx, dy, dz)
+        distance = Math.hypot(dx, dy, dz)
         if (distance >= def.maxDistance) return
-        loudness *= attenuation(distance, def.refDistance, def.maxDistance)
+        loudness *= attenuation(distance, def.refDistance, def.maxDistance, def.rolloff)
         const horizontal = Math.hypot(dx, dz)
-        if (horizontal > 1e-3) {
+        if (horizontal > SPATIAL_MIN) {
           const nx = dx / horizontal
           const nz = dz / horizontal
           // 听者的右方向 = forward × up = (-forwardZ, forwardX)
@@ -325,7 +347,11 @@ export function createAudio(): AudioSystem {
           const front = nx * forwardX + nz * forwardZ
           // 贴身的声音不做大幅声像；身后的声音略小
           pan = clamp(side, -1, 1) * PAN_WIDTH * Math.min(1, horizontal / 2)
-          if (front < 0) loudness *= 1 + 0.2 * front
+          if (front < 0) loudness *= 1 + 0.15 * front
+          spatial = true
+          localX = side * horizontal
+          localY = dy
+          localZ = -front * horizontal
         }
       }
       if (loudness < 0.003) return
@@ -350,7 +376,28 @@ export function createAudio(): AudioSystem {
       }
       if (oldest && same >= def.maxVoices) steal(oldest, now)
 
-      // 总发声数上限：按优先级丢弃（受伤 / Boss / UI > 枪声 > 脚步、远处丧尸）
+      // 分组上限（丧尸）：满了就和组内最轻的比，这次更响（更近）才顶掉它，否则放弃
+      const group = def.group
+      if (group !== undefined) {
+        let count = 0
+        let weakest: Voice | null = null
+        let weakestScore = Infinity
+        for (const voice of voices) {
+          if (voice.group !== group) continue
+          count++
+          const s = scoreOf(voice, now)
+          if (s < weakestScore) {
+            weakest = voice
+            weakestScore = s
+          }
+        }
+        if (weakest && count >= GROUP_VOICES[group]) {
+          if (weakestScore >= def.priority * 100 + Math.min(1, loudness) * 40) return
+          steal(weakest, now)
+        }
+      }
+
+      // 总发声数上限：按优先级丢弃（受伤 / Boss / UI > 枪声、丧尸叫声 > 脚步、弹壳），同级先丢轻的
       if (voices.length >= MAX_VOICES) {
         const score = def.priority * 100 + Math.min(1, loudness) * 40
         let victim: Voice | null = null
@@ -391,10 +438,36 @@ export function createAudio(): AudioSystem {
       }
 
       let tail: AudioNode = gain
-      if (pan !== 0 && typeof g.ctx.createStereoPanner === 'function') {
+
+      // 空气吸收：远处的声音高频更少，听起来更“远”
+      if (distance > AIR_START) {
+        const air = g.ctx.createBiquadFilter()
+        air.type = 'lowpass'
+        air.Q.value = 0.5
+        air.frequency.value = clamp(g.openCutoff / (1 + (distance - AIR_START) / AIR_SPAN), 2500, g.openCutoff)
+        tail.connect(air)
+        nodes.push(air)
+        tail = air
+      }
+
+      // 方位：HRTF 只负责方向（rolloffFactor 0，距离衰减已在上面按音效表算好）；不支持时退回左右声像
+      if (spatial && typeof g.ctx.createPanner === 'function') {
+        const panner = g.ctx.createPanner()
+        panner.panningModel = 'HRTF'
+        panner.distanceModel = 'linear'
+        panner.rolloffFactor = 0
+        panner.refDistance = 1
+        panner.maxDistance = 10000
+        panner.positionX.value = localX
+        panner.positionY.value = localY
+        panner.positionZ.value = localZ
+        tail.connect(panner)
+        nodes.push(panner)
+        tail = panner
+      } else if (pan !== 0 && typeof g.ctx.createStereoPanner === 'function') {
         const panner = g.ctx.createStereoPanner()
         panner.pan.value = pan
-        gain.connect(panner)
+        tail.connect(panner)
         nodes.push(panner)
         tail = panner
       }
@@ -410,6 +483,7 @@ export function createAudio(): AudioSystem {
 
       const voice: Voice = {
         id,
+        group,
         source,
         gain,
         nodes,
@@ -437,6 +511,7 @@ export function createAudio(): AudioSystem {
           graph.ambient.setHelicopter(heliLevel)
           graph.ambient.setHeartbeat(heartbeatOn)
           graph.music.setTrack(track)
+          void loadExternalVoices(graph)
         }
       }
       const g = graph

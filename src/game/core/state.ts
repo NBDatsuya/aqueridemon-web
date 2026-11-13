@@ -97,7 +97,7 @@ export interface HudEnding {
 
 export interface HudState {
   phase: GamePhase
-  /** 指针是否已锁定（未锁定时游戏逻辑停住） */
+  /** 指针是否已锁定（未锁定时只有键盘可用，鼠标视角与射击要等锁定） */
   locked: boolean
   /** 每次游戏中失去指针锁定（按 ESC、切走窗口）+1，游戏页据此打开暂停菜单 */
   pauseRequest: number
@@ -113,8 +113,6 @@ export interface HudState {
   waveKilled: number
   /** 场上存活丧尸数 */
   enemiesAlive: number
-  /** 准备期 / 间歇期剩余秒数；没有则为 -1 */
-  timer: number
 
   hp: number
   maxHp: number
@@ -192,7 +190,7 @@ function initialSquad(): HudSquadMember[] {
 /** 生成一份全新的 HUD 初始状态 */
 function initialState(): HudState {
   return {
-    phase: 'select',
+    phase: 'prep',
     locked: false,
     pauseRequest: 0,
     paused: false,
@@ -202,7 +200,6 @@ function initialState(): HudState {
     waveTotal: 0,
     waveKilled: 0,
     enemiesAlive: 0,
-    timer: -1,
     hp: PLAYER.maxHp,
     maxHp: PLAYER.maxHp,
     status: 'alive',
@@ -255,8 +252,6 @@ export function resetHud(): void {
 
 /** HUD 交还给引擎的操作 */
 export interface HudActions {
-  /** 选枪界面选定武器并开始游戏（必须在用户手势回调里调用） */
-  selectWeapon(weapon: WeaponId): void
   /** 武器替换界面：选定被替换的槽位；null 表示放弃 */
   resolveWeaponChoice(slot: number | null): void
   /** 提交作弊指令（控制台打开时有效） */
@@ -266,7 +261,6 @@ export interface HudActions {
 }
 
 const NOOP_ACTIONS: HudActions = {
-  selectWeapon: () => {},
   resolveWeaponChoice: () => {},
   submitCheat: () => {},
   closeCheat: () => {},

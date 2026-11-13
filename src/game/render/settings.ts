@@ -14,12 +14,17 @@ export interface QualityProfile {
   samples: number
   /** 太阳阴影贴图边长 */
   shadowMapSize: number
+  /**
+   * 太阳阴影跟随相机时覆盖的半边长（米）。阴影框以相机前方为中心，
+   * 越小越清晰；贴图边长 / (2 × 半边长) 即每米的阴影像素数
+   */
+  shadowExtent: number
 }
 
 export const QUALITY_PROFILES: Record<RenderQuality, QualityProfile> = {
-  high: { post: true, ao: true, samples: 4, shadowMapSize: 4096 },
-  medium: { post: true, ao: false, samples: 4, shadowMapSize: 2048 },
-  low: { post: false, ao: false, samples: 0, shadowMapSize: 2048 },
+  high: { post: true, ao: true, samples: 4, shadowMapSize: 4096, shadowExtent: 48 },
+  medium: { post: true, ao: false, samples: 4, shadowMapSize: 2048, shadowExtent: 44 },
+  low: { post: false, ao: false, samples: 0, shadowMapSize: 2048, shadowExtent: 56 },
 }
 
 /** 低于该帧率并持续 DOWNGRADE_SECONDS 秒时降一档 */

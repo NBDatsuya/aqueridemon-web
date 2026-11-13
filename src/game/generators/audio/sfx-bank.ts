@@ -16,14 +16,19 @@ import {
   renderBossSummon,
   renderBossSweep,
   renderRunnerAttack,
+  renderRunnerHurt,
   renderRunnerScreech,
   renderTankDie,
+  renderTankHurt,
   renderTankRoar,
   renderTankSlam,
   renderTankStep,
+  renderZombieAlert,
   renderZombieAttack,
   renderZombieDie,
   renderZombieGroan,
+  renderZombieHurt,
+  renderZombieStep,
 } from './creatures'
 import {
   renderBodyFall,
@@ -48,8 +53,11 @@ import type { Rendered } from './synth'
 /** 合成函数：返回单声道或 [左, 右] 样本。variant 为变体序号（0 起） */
 export type SfxRenderer = (sr: number, rng: Rng, variant: number) => Rendered
 
-/** 优先级：3 关键（受伤、Boss 技能、UI）；2 枪声与重要世界事件；1 脚步、丧尸 */
+/** 优先级：3 关键（受伤、Boss 技能、UI）；2 枪声、丧尸叫声与重要世界事件；1 脚步、弹壳 */
 export type SfxPriority = 1 | 2 | 3
+
+/** 发声分组：同组共享一个同时发声上限（见 audio/index.ts 的 GROUP_VOICES），满了先顶掉最轻（通常最远）的 */
+export type SfxGroup = 'zombie'
 
 export interface SfxDef {
   /** 合成函数；external 条目没有合成实现，声音来自加载的音频文件 */
@@ -65,6 +73,10 @@ export interface SfxDef {
   refDistance: number
   /** 最大可闻距离（米）：超出直接丢弃 */
   maxDistance: number
+  /** 衰减斜率：增益 = ref / (ref + rolloff × (距离 − ref))；1 为反比，越小越传得远 */
+  rolloff: number
+  /** 发声分组（可选） */
+  group?: SfxGroup
   /** 混响发送量 0..1 */
   reverb: number
   /** 是否经过 WaveShaper 失真（怪物的咆哮） */
@@ -88,6 +100,7 @@ function def(render: SfxRenderer, priority: SfxPriority, gain: number, tuning: S
     maxVoices: 3,
     refDistance: 4,
     maxDistance: 60,
+    rolloff: 1,
     reverb: 0,
     distortion: false,
     jitter: 0,
@@ -116,6 +129,7 @@ function externalDef(priority: SfxPriority, gain: number, tuning: SfxTuning = {}
     maxVoices: 3,
     refDistance: 4,
     maxDistance: 60,
+    rolloff: 1,
     reverb: 0,
     distortion: false,
     jitter: 0,
@@ -127,6 +141,12 @@ function externalDef(priority: SfxPriority, gain: number, tuning: SfxTuning = {}
 
 /** Boss 音效的公共参数：全场可闻 */
 const BOSS: SfxTuning = { refDistance: 18, maxDistance: 400, maxVoices: 2 }
+
+/**
+ * 丧尸叫声的公共参数：参考距离 4 米、衰减斜率 0.5，20 米约 −10 dB、35 米约 −14 dB，55 米外静音；
+ * 归入 zombie 组，组内按响度（近的优先）抢占
+ */
+const ZOMBIE: SfxTuning = { refDistance: 4, maxDistance: 55, rolloff: 0.5, maxVoices: 3, group: 'zombie' }
 
 /** 全部音效定义 */
 export const SFX: Record<SfxId, SfxDef> = {
@@ -162,43 +182,53 @@ export const SFX: Record<SfxId, SfxDef> = {
   downed_alert: def(renderDownedAlert, 3, 0.6, { throttle: 0.5, maxVoices: 1 }),
   revive: def(renderRevive, 3, 0.6, { throttle: 0.3, maxVoices: 2 }),
 
-  // 普通丧尸
-  zombie_groan: def(renderZombieGroan, 1, 0.45, {
-    throttle: 0.45,
-    refDistance: 3,
-    maxDistance: 38,
-    reverb: 0.3,
-    jitter: 0.12,
-    variants: 3,
-  }),
-  zombie_attack: def(renderZombieAttack, 1, 0.6, {
-    throttle: 0.12,
-    refDistance: 3,
-    maxDistance: 35,
-    reverb: 0.15,
-    jitter: 0.1,
-  }),
-  zombie_die: def(renderZombieDie, 1, 0.55, {
-    throttle: 0.1,
-    refDistance: 3,
-    maxDistance: 40,
-    reverb: 0.2,
-    jitter: 0.12,
-  }),
-
-  // 快速丧尸
-  runner_screech: def(renderRunnerScreech, 1, 0.5, {
-    throttle: 0.5,
-    maxVoices: 2,
-    refDistance: 4,
-    maxDistance: 55,
+  // 普通丧尸：叫声归入 zombie 组（组内上限、近的优先），衰减放缓到 30–40 米仍可闻
+  zombie_groan: def(renderZombieGroan, 2, 0.9, {
+    ...ZOMBIE,
+    throttle: 0.2,
+    maxVoices: 4,
     reverb: 0.3,
     jitter: 0.08,
+    variants: 6,
   }),
-  runner_attack: def(renderRunnerAttack, 1, 0.55, { throttle: 0.12, refDistance: 3, maxDistance: 35, jitter: 0.08 }),
+  zombie_alert: def(renderZombieAlert, 2, 1, { ...ZOMBIE, throttle: 0.25, reverb: 0.3, jitter: 0.06, variants: 3 }),
+  zombie_hurt: def(renderZombieHurt, 2, 0.75, {
+    ...ZOMBIE,
+    throttle: 0.08,
+    maxDistance: 40,
+    reverb: 0.12,
+    jitter: 0.08,
+    variants: 4,
+  }),
+  zombie_step: def(renderZombieStep, 1, 0.45, {
+    throttle: 0.05,
+    maxVoices: 4,
+    refDistance: 2.5,
+    maxDistance: 24,
+    rolloff: 0.8,
+    group: 'zombie',
+    jitter: 0.1,
+    variants: 4,
+  }),
+  zombie_attack: def(renderZombieAttack, 2, 0.9, { ...ZOMBIE, throttle: 0.1, reverb: 0.15, jitter: 0.08, variants: 3 }),
+  zombie_die: def(renderZombieDie, 2, 0.85, { ...ZOMBIE, throttle: 0.08, reverb: 0.2, jitter: 0.08, variants: 3 }),
+
+  // 快速丧尸
+  runner_screech: def(renderRunnerScreech, 2, 0.75, {
+    ...ZOMBIE,
+    throttle: 0.35,
+    maxVoices: 2,
+    maxDistance: 60,
+    reverb: 0.3,
+    jitter: 0.06,
+    variants: 3,
+  }),
+  runner_attack: def(renderRunnerAttack, 2, 0.8, { ...ZOMBIE, throttle: 0.1, jitter: 0.08, variants: 2 }),
+  runner_hurt: def(renderRunnerHurt, 2, 0.7, { ...ZOMBIE, throttle: 0.08, maxDistance: 40, jitter: 0.08, variants: 3 }),
 
   // 坦克丧尸
-  tank_roar: def(renderTankRoar, 2, 0.7, {
+  tank_roar: def(renderTankRoar, 2, 0.9, {
+    ...ZOMBIE,
     throttle: 0.8,
     maxVoices: 2,
     refDistance: 6,
@@ -206,10 +236,19 @@ export const SFX: Record<SfxId, SfxDef> = {
     reverb: 0.35,
     distortion: true,
     jitter: 0.06,
+    variants: 2,
   }),
-  tank_step: def(renderTankStep, 1, 0.6, { throttle: 0.15, refDistance: 5, maxDistance: 50, jitter: 0.08 }),
-  tank_slam: def(renderTankSlam, 2, 0.9, { throttle: 0.2, refDistance: 6, maxDistance: 80, reverb: 0.2 }),
-  tank_die: def(renderTankDie, 2, 0.85, { throttle: 0.3, maxVoices: 2, refDistance: 6, maxDistance: 80, reverb: 0.3 }),
+  tank_hurt: def(renderTankHurt, 2, 0.8, { ...ZOMBIE, throttle: 0.15, maxVoices: 2, refDistance: 5, distortion: true, variants: 2 }),
+  tank_step: def(renderTankStep, 1, 0.7, {
+    throttle: 0.12,
+    refDistance: 5,
+    maxDistance: 50,
+    rolloff: 0.7,
+    group: 'zombie',
+    jitter: 0.08,
+  }),
+  tank_slam: def(renderTankSlam, 2, 0.9, { ...ZOMBIE, throttle: 0.2, refDistance: 6, maxDistance: 80, reverb: 0.2 }),
+  tank_die: def(renderTankDie, 2, 0.85, { ...ZOMBIE, throttle: 0.3, maxVoices: 2, refDistance: 6, maxDistance: 80, reverb: 0.3 }),
 
   // Boss
   boss_roar: def(renderBossRoar, 3, 0.9, { ...BOSS, throttle: 1, reverb: 0.45, distortion: true }),
@@ -248,20 +287,26 @@ export const SFX_IDS: readonly SfxId[] = [
   'footstep',
   'hurt',
   'wave_start',
+  // 丧尸在第一波开场就会出声，排在枪声之后立刻渲染
+  'zombie_groan',
+  'zombie_alert',
+  'zombie_step',
+  'zombie_hurt',
+  'zombie_attack',
+  'zombie_die',
   'wave_clear',
   'tick',
   'heartbeat',
-  'zombie_groan',
-  'zombie_attack',
-  'zombie_die',
   'runner_screech',
   'runner_attack',
+  'runner_hurt',
   'body_fall',
   'downed_alert',
   'revive',
   'tank_roar',
   'tank_step',
   'tank_slam',
+  'tank_hurt',
   'tank_die',
   'plane',
   'crate_land',

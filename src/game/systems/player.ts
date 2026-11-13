@@ -7,7 +7,7 @@
  */
 
 import { Vector3 } from 'three'
-import { CombatantBase, createWeaponState } from '../core/combatant'
+import { CombatantBase } from '../core/combatant'
 import { HEADSHOT, INTERACT, MAX_SHOT_DISTANCE, PLAYER, PLAYER_START, WEAPONS } from '../core/config'
 import type {
   ActorStatus,
@@ -27,7 +27,8 @@ import type {
   WeaponId,
   WeaponState,
 } from '../core/types'
-import { clamp, damp, dampAngle, distXZ, invLerp, lerp, smoothstep, wrapAngle } from '../utils/math'
+import { clamp, damp, dampAngle, distXZ, distXZSq, invLerp, lerp, smoothstep, wrapAngle } from '../utils/math'
+import { setHumanoidUpperHidden } from '../generators/geometry/humanoid'
 import { VIEW_MODEL_SCALE, createViewModel } from './player-viewmodel'
 import type { ViewModelInput } from './player-viewmodel'
 
@@ -153,9 +154,10 @@ const MUZZLE_FALLBACK = { forward: 0.4, right: 0.08, down: 0.06 } as const
 
 const TEXT = {
   rescue: '按住 E 救援 ',
-  board: '按住 E 登机',
+  board: '按 E 登机就座',
   sample: '按住 E 提取样本',
   airdrop: '按 E 拾取空投',
+  crate: '按 E 打开主武器箱',
 } as const
 
 const SHOT_SFX: Record<WeaponId, SfxId> = {
@@ -200,11 +202,28 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
   const eye = new Vector3()
   const rng = ctx.rng.fork()
 
-  // 身体模型：第一人称时隐藏，倒地 / 阵亡的第三人称镜头里才显示
+  // 身体模型：第一人称时显示躯干、腰带与双腿（低头能看到胸腹和脚），头与双臂只投射阴影（双臂由视图模型代替）；
+  // 倒地 / 阵亡的第三人称镜头里整身显示
   const body = ctx.models.createCharacter('samuel')
-  body.root.visible = false
   ctx.scene.add(body.root)
   const bodyAnim: HumanoidAnimInput = { speed: 0, pose: 'downed', action: 'none', actionProgress: 0 }
+  /**
+   * 第一人称时身体沿视线水平方向后移的距离：胸口前沿约在镜头后 6cm、下方 18cm，
+   * 平视时整段躯干在视野下沿之外，低头时胸腹出现在画面下半部
+   */
+  const BODY_BACK = 0.16
+  /** 低头（俯角 0.3 → 1.1 rad）时额外后移的距离：胸口前沿退到镜头后约 18cm，肩头与领口移出画面下沿 */
+  const BODY_BACK_DOWN = 0.12
+  /** 第一人称身体的瞄准俯仰下限（低头时躯干最多前倾约 0.09 rad） */
+  const BODY_MIN_AIM_PITCH = -0.35
+
+  /** 按状态切换身体显示：第一人称（无头无臂）/ 第三人称整身 / 登机后隐藏 */
+  function syncBodyMode(status: ActorStatus): void {
+    const thirdPerson = status === 'downed' || status === 'dead'
+    body.root.visible = thirdPerson || status === 'alive'
+    setHumanoidUpperHidden(body, !thirdPerson)
+  }
+  syncBodyMode(actor.status)
 
   const view = createViewModel(ctx.models)
   camera.add(view.root)
@@ -286,6 +305,16 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
 
   let lastHurtAt = -1
 
+  // 登机就座过渡：相机从登机时的站位眼睛平滑移到座位眼位，朝向转进环顾范围
+  /** 过渡已推进的时间；未登机为 -1 */
+  let seatTimer = -1
+  /** 登机瞬间站位眼睛相对座位眼位的偏移，以及当时的视线角 */
+  const seatFrom = new Vector3()
+  let seatFromYaw = 0
+  let seatFromPitch = 0
+  /** 当前过渡偏移（引擎在所有系统更新完后把相机贴到 seatWorld + seatOffset） */
+  const seatOffset = new Vector3()
+
   /* ── 相机 ── */
 
   /** 由朝向角与俯仰角写出视线方向 */
@@ -296,10 +325,10 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     forward.set(Math.sin(y) * cp, Math.sin(p), Math.cos(y) * cp)
   }
 
-  /** 相机位置 = 眼睛 + 震动偏移；朝向取自 viewYaw / viewPitch */
+  /** 相机位置 = 眼睛 + 震动偏移（登机后不叠加震动，相机只随机舱移动）；朝向取自 viewYaw / viewPitch */
   function writeCamera(extraPitch: number, roll: number): void {
     camera.position.copy(eye)
-    if (ready) camera.position.add(ctx.effects.shakeOffset)
+    if (ready && actor.status !== 'boarded') camera.position.add(ctx.effects.shakeOffset)
     // three 相机默认看向 -Z，而约定 yaw = 0 时朝 +Z，两者差半圈
     camera.rotation.set(viewPitch + extraPitch, viewYaw + Math.PI, roll)
   }
@@ -341,10 +370,31 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     writeCamera(0, 0)
   }
 
-  /** 已登机：相机固定在机舱座位，仍可环顾 */
+  /** 登机瞬间记下站位眼睛与视线，开始就座过渡；同一次登机只记一次 */
+  function beginSeat(): void {
+    if (seatTimer >= 0) return
+    seatTimer = 0
+    ctx.evac.seatWorld(seatFrom)
+    seatFrom.subVectors(eye, seatFrom)
+    seatOffset.copy(seatFrom)
+    seatFromYaw = viewYaw
+    seatFromPitch = viewPitch
+  }
+
+  /**
+   * 已登机：相机贴在机舱座位眼位，只能在正对舱门的一定范围内环顾。
+   * 登机后的前 INTERACT.seatBlendTime 秒从站位平滑移入座位，朝向同时转进环顾范围。
+   */
   function applySeat(): void {
-    setView(yaw, pitch)
-    ctx.evac.seatWorld(eye)
+    // 环顾范围以座位正对舱门的朝向为中心；把瞄准角本身也夹住，避免甩出范围后要倒拨很久
+    const center = ctx.evac.seatYaw()
+    yaw = wrapAngle(center + clamp(wrapAngle(yaw - center), -INTERACT.seatYawLimit, INTERACT.seatYawLimit))
+    pitch = clamp(pitch, -INTERACT.seatPitchDown, INTERACT.seatPitchUp)
+    const blendTime: number = INTERACT.seatBlendTime
+    const s = seatTimer < 0 || blendTime <= 0 ? 1 : smoothstep(seatTimer / blendTime)
+    setView(wrapAngle(seatFromYaw + wrapAngle(yaw - seatFromYaw) * s), lerp(seatFromPitch, pitch, s))
+    seatOffset.copy(seatFrom).multiplyScalar(1 - s)
+    ctx.evac.seatWorld(eye).add(seatOffset)
     writeCamera(0, 0)
   }
 
@@ -580,8 +630,29 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     return rescueText
   }
 
+  /** 最近的、自己还能开的箱子：主武器箱每人限开几个，开满的直接跳过 */
+  function findCrate(): AirdropCrate | null {
+    const list = ctx.airdrops.crates
+    const limit = INTERACT.airdropRange * INTERACT.airdropRange
+    let best: AirdropCrate | null = null
+    let bestSq = limit
+    for (let i = 0; i < list.length; i++) {
+      const crate = list[i]
+      if (!crate || !crate.landed) continue
+      if (crate.limited && crate.content.kind === 'weapon' && ctx.airdrops.hasOpenedWeaponCrate(actor)) continue
+      const sq = distXZSq(crate.position, actor.position)
+      if (sq <= bestSq) {
+        bestSq = sq
+        best = crate
+      }
+    }
+    return best
+  }
+
   /**
    * 挑出本帧可用的交互（救援 > 登机 > 样本 > 空投）并推进读条。
+   * 登机不会自动发生：站进舱门登机范围后提示“按 E 登机就座”，按下 E 才登机。
+   * 只在主控存活且能行动时调用。
    * @returns 是否正在进行会锁住移动与射击的读条（救援 / 样本）
    */
   function updateInteraction(dt: number): boolean {
@@ -599,7 +670,6 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
       interactionInfo.text = rescueLabel(rescue)
     } else if (ctx.evac.canBoard(actor)) {
       kind = 'board'
-      duration = INTERACT.boardTime
       interactionInfo.text = TEXT.board
     } else if (
       !actor.hasSample &&
@@ -610,10 +680,10 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
       duration = INTERACT.sampleTime
       interactionInfo.text = TEXT.sample
     } else {
-      crate = ctx.airdrops.nearestLanded(actor.position, INTERACT.airdropRange)
+      crate = findCrate()
       if (crate) {
         kind = 'airdrop'
-        interactionInfo.text = TEXT.airdrop
+        interactionInfo.text = crate.content.kind === 'weapon' ? TEXT.crate : TEXT.airdrop
       }
     }
 
@@ -634,6 +704,17 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
       return false
     }
 
+    if (kind === 'board') {
+      // 按一下 E 就座：先记下站位再登机，就座过渡从当前视角开始
+      if (input.wasPressed('KeyE')) {
+        beginSeat()
+        ctx.evac.board(actor)
+        if (actor.status === 'boarded') hasInteraction = false
+        else seatTimer = -1
+      }
+      return false
+    }
+
     if (!input.isDown('KeyE')) {
       cancelHold()
       return false
@@ -647,8 +728,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     }
 
     // 救援与样本读条会被受伤打断并清零；按住不放则从头再来
-    const locking = kind !== 'board'
-    if (locking && actor.damageSerial !== holdSerial) {
+    if (actor.damageSerial !== holdSerial) {
       cancelHold()
       return false
     }
@@ -657,7 +737,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     holdTime += dt
     if (holdTime < duration) {
       interactionInfo.progress = holdTime / duration
-      return locking
+      return true
     }
 
     // 读条完成
@@ -668,8 +748,6 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     if (kind === 'rescue') {
       if (target) target.revive()
       ctx.audio.play('revive')
-    } else if (kind === 'board') {
-      ctx.evac.board(actor)
     } else {
       ctx.boss.takeSample()
       actor.hasSample = true
@@ -969,7 +1047,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     }
 
     const showBody = to === 'downed' || to === 'dead'
-    body.root.visible = showBody
+    syncBodyMode(to)
     if (showBody) {
       body.root.position.copy(actor.position)
       body.root.rotation.y = bodyYaw
@@ -1022,6 +1100,8 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     }
 
     if (status === 'boarded') {
+      beginSeat()
+      seatTimer = Math.min(seatTimer + dt, INTERACT.seatBlendTime)
       actor.velocity.set(0, 0, 0)
       actor.airborne = false
       moveSpeed = 0
@@ -1059,6 +1139,23 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
       bodyAnim.pose = status === 'downed' ? 'downed' : 'dead'
       bodyAnim.speed = status === 'downed' ? moveSpeed : 0
       body.update(dt, bodyAnim)
+    } else if (status === 'alive') {
+      // 第一人称：身体朝向视线、略向后放，双腿按移动速度走 / 跑；躯干按持枪瞄准姿态摆（头与双臂只投影）
+      const pos = actor.position
+      // 低头时再往后放：镜头移到胸口前方，看到的是胸腹正面、腰带和脚，而不是肩头与领口
+      const back = BODY_BACK + BODY_BACK_DOWN * smoothstep((-pitch - 0.3) / 0.8)
+      body.root.position.set(pos.x - Math.sin(yaw) * back, pos.y, pos.z - Math.cos(yaw) * back)
+      body.root.rotation.y = yaw
+      const armed = actor.weapon !== undefined
+      const reload = reloadProgress()
+      bodyAnim.pose = 'stand'
+      bodyAnim.speed = moveSpeed
+      bodyAnim.aiming = armed && !viewInput.sprinting
+      // 瞄准俯仰会让躯干前倾：低头时限制前倾，胸口始终留在镜头后下方，不会顶到近裁剪面
+      bodyAnim.aimPitch = Math.max(pitch, BODY_MIN_AIM_PITCH)
+      bodyAnim.action = reload >= 0 ? 'reload' : 'none'
+      bodyAnim.actionProgress = reload >= 0 ? reload : 0
+      body.update(dt, bodyAnim)
     }
 
     ctx.audio.setListener(eye, forward)
@@ -1068,18 +1165,6 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     const weapon = actor.weapon
     if (reloadTimer < 0 || !weapon) return -1
     return clamp(reloadTimer / WEAPONS[weapon.id].reloadTime, 0, 1)
-  }
-
-  function equipInitial(weapon: WeaponId): void {
-    actor.weapons.length = 0
-    actor.weapons.push(createWeaponState(weapon))
-    actor.currentWeapon = 0
-    reloadTimer = -1
-    switchTimer = 0
-    fireTimer = 0
-    bloom = 0
-    dryLatch = false
-    syncWeapons()
   }
 
   function setControl(enabled: boolean): void {
@@ -1099,7 +1184,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     body.dispose()
   }
 
-  // 引擎首帧之前（选枪界面）相机也要在出生点
+  // 引擎首帧之前相机也要在出生点
   applyFirstPerson()
 
   return {
@@ -1124,7 +1209,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     get interaction(): InteractionInfo | null {
       return hasInteraction ? interactionInfo : null
     },
-    equipInitial,
+    seatOffset,
     setControl,
     init,
     update,

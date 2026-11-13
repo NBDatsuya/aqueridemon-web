@@ -1,20 +1,22 @@
 /**
  * 空投系统：选点、带伞下落、落地标记（红色烟雾 + 绿色光柱）、拾取与武器替换。
+ * 同时负责开局摆在地上的主武器箱：箱内主武器随机，每人限开 WEAPON_CRATES.perPerson 个。
  * 箱子没有碰撞体。模型来自 ctx.models.createAirdrop()，这里只负责 root 的位置朝向并每帧驱动 rig.update。
  */
 
-import { AIRDROP, AIRDROP_POINTS, WEAPON_ORDER } from '../core/config'
+import { AIRDROP, AIRDROP_POINTS, WEAPON_CRATES, WEAPON_ORDER } from '../core/config'
 import type {
   AirdropAnimInput,
   AirdropContent,
   AirdropCrate,
   AirdropRig,
   AirdropSystem,
+  CharacterId,
   Combatant,
   EffectHandle,
   GameContext,
 } from '../core/types'
-import { distXZSq, smoothstep } from '../utils/math'
+import { smoothstep } from '../utils/math'
 
 /* ── 表现参数（补充，不涉及玩法数值） ── */
 
@@ -34,11 +36,13 @@ const SWAY_DRIFT = 0.8
 const SWAY_SPEED = 2.1
 /** 剩余下落进度低于该比例后倾角逐渐收平 */
 const SWAY_SETTLE = 0.25
+/** 开局主武器箱不占用空投落点，用这个下标区分 */
+const NO_POINT = -1
 
 /** 内部箱子记录：对外只暴露 AirdropCrate 的只读部分 */
 interface Crate extends AirdropCrate {
   landed: boolean
-  /** 占用的 AIRDROP_POINTS 下标 */
+  /** 占用的 AIRDROP_POINTS 下标；开局主武器箱为 NO_POINT */
   readonly pointIndex: number
   /** 落点 x */
   readonly x: number
@@ -66,14 +70,15 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
   const freePoints: number[] = []
   /** 每帧复用的动画输入 */
   const anim: AirdropAnimInput = { parachute: 0, landed: false }
-  const chanceTotal = AIRDROP.weaponChance + AIRDROP.ammoChance + AIRDROP.medkitChance
+  /** 每名成员已经开掉的主武器箱数 */
+  const openedCrates = new Map<CharacterId, number>()
   let nextId = 1
 
-  /** 按配置概率随机箱内物品 */
-  const rollContent = (): AirdropContent => {
-    const roll = ctx.rng.next() * chanceTotal
-    if (roll < AIRDROP.weaponChance) return { kind: 'weapon', weapon: ctx.rng.pick(WEAPON_ORDER) }
-    if (roll < AIRDROP.weaponChance + AIRDROP.ammoChance) return { kind: 'ammo' }
+  /** 按一组权重随机箱内物品 */
+  const rollContent = (mix: Readonly<{ weapon: number; ammo: number; medkit: number }>): AirdropContent => {
+    const roll = ctx.rng.next() * (mix.weapon + mix.ammo + mix.medkit)
+    if (roll < mix.weapon) return { kind: 'weapon', weapon: ctx.rng.pick(WEAPON_ORDER) }
+    if (roll < mix.weapon + mix.ammo) return { kind: 'ammo' }
     return { kind: 'medkit' }
   }
 
@@ -94,31 +99,65 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
     return null
   }
 
-  /** 在指定落点上空生成一个带伞下落的箱子 */
-  const spawn = (pointIndex: number): void => {
-    const point = AIRDROP_POINTS[pointIndex]
-    if (!point) return
-    const rig = ctx.models.createAirdrop()
+  /** 这名成员还剩几次开主武器箱的机会 */
+  const canOpenWeaponCrate = (who: Combatant): boolean =>
+    (openedCrates.get(who.id) ?? 0) < WEAPON_CRATES.perPerson
+
+  /** 记一次开箱 */
+  const markOpened = (who: Combatant): void => {
+    openedCrates.set(who.id, (openedCrates.get(who.id) ?? 0) + 1)
+  }
+
+  /**
+   * 生成一个箱子。
+   * @param placed true 时直接摆在地面上（开局主武器箱），否则从高空带伞下落
+   * @param limited 是否计入每人限开次数（只有开局摆在地上的主武器箱为 true）
+   */
+  const createCrate = (
+    x: number,
+    z: number,
+    pointIndex: number,
+    content: AirdropContent,
+    placed: boolean,
+    limited: boolean,
+  ): Crate => {
+    // 三种内容三种箱型：子弹是原补给箱，主武器是硬箱，医疗包是白箱蓝十字
+    const rig =
+      content.kind === 'weapon'
+        ? ctx.models.createWeaponCrate({ parachute: !placed })
+        : content.kind === 'medkit'
+          ? ctx.models.createMedkitCrate({ parachute: !placed })
+          : ctx.models.createAirdrop()
     const yaw = ctx.rng.range(0, Math.PI * 2)
-    rig.root.position.set(point.x, GROUND_Y + AIRDROP.startHeight, point.z)
+    rig.root.position.set(x, placed ? GROUND_Y : GROUND_Y + AIRDROP.startHeight, z)
     rig.root.rotation.set(0, yaw, 0)
     ctx.scene.add(rig.root)
-    crates.push({
+    const crate: Crate = {
       id: nextId++,
       // 直接复用模型 root 的位置向量：箱底中心就是模型原点
       position: rig.root.position,
-      landed: false,
-      content: rollContent(),
+      landed: placed,
+      content,
+      limited,
       pointIndex,
-      x: point.x,
-      z: point.z,
+      x,
+      z,
       yaw,
       swayPhase: ctx.rng.range(0, Math.PI * 2),
       rig,
       fall: 0,
       beam: null,
       smoke: null,
-    })
+    }
+    crates.push(crate)
+    return crate
+  }
+
+  /** 在指定落点上空生成一个带伞下落的箱子 */
+  const spawn = (pointIndex: number, mix: Readonly<{ weapon: number; ammo: number; medkit: number }>): void => {
+    const point = AIRDROP_POINTS[pointIndex]
+    if (!point) return
+    createCrate(point.x, point.z, pointIndex, rollContent(mix), false, false)
   }
 
   /** 落地：摆正箱体，立起红烟与绿色光柱并通知其他系统 */
@@ -179,7 +218,17 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
       return crates
     },
 
-    drop(count) {
+    deployWeaponCrates() {
+      const points = WEAPON_CRATES.points
+      for (let i = 0; i < points.length; i++) {
+        const point = points[i]
+        if (!point) continue
+        createCrate(point.x, point.z, NO_POINT, { kind: 'weapon', weapon: ctx.rng.pick(WEAPON_ORDER) }, true, true)
+      }
+    },
+
+    drop(count, source = 'wave') {
+      const mix = source === 'boss' ? AIRDROP.bossMix : AIRDROP.waveMix
       freePoints.length = 0
       for (let i = 0; i < AIRDROP_POINTS.length; i++) {
         if (!isOccupied(i)) freePoints.push(i)
@@ -192,23 +241,12 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
       ctx.audio.play('plane')
       for (let i = 0; i < total; i++) {
         const pointIndex = freePoints[i]
-        if (pointIndex !== undefined) spawn(pointIndex)
+        if (pointIndex !== undefined) spawn(pointIndex, mix)
       }
     },
 
-    nearestLanded(pos, maxDist) {
-      let best: Crate | null = null
-      let bestSq = maxDist * maxDist
-      for (let i = 0; i < crates.length; i++) {
-        const crate = crates[i]
-        if (!crate || !crate.landed) continue
-        const sq = distXZSq(pos, crate.position)
-        if (sq <= bestSq) {
-          bestSq = sq
-          best = crate
-        }
-      }
-      return best
+    hasOpenedWeaponCrate(who) {
+      return !canOpenWeaponCrate(who)
     },
 
     pickup(crate, who) {
@@ -220,6 +258,8 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
 
       const content = own.content
       if (content.kind === 'weapon') {
+        // 开局摆在地上的主武器箱每人只有固定的开箱次数，用完了箱子留给别人；空投下来的不限
+        if (own.limited && !canOpenWeaponCrate(who)) return 'blocked'
         if (who.giveWeapon(content.weapon) === 'full') {
           if (who.isPlayer) {
             ctx.events.emit('weaponChoice', { crate: own, weapon: content.weapon })
@@ -227,6 +267,7 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
           }
           who.replaceWeapon(who.currentWeapon, content.weapon)
         }
+        if (own.limited) markOpened(who)
       } else if (content.kind === 'ammo') {
         who.refillWeapon()
       } else {
@@ -244,6 +285,7 @@ export function createAirdrops(ctx: GameContext): AirdropSystem {
       if (slot < 0 || slot >= who.weapons.length) return
       who.replaceWeapon(slot, own.content.weapon)
       who.currentWeapon = slot
+      if (own.limited) markOpened(who)
       finish(own, who)
     },
 

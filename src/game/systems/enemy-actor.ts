@@ -101,18 +101,42 @@ export const ENEMY_TUNING = {
   /** 离场地边线多远算“已在场内”（米） */
   fieldMargin: 4,
 
-  /** 每只丧尸两次低吼的间隔范围（秒） */
-  groanMin: 5,
-  groanMax: 11,
-  /** 全场任意两次低吼之间的最小间隔范围（秒） */
-  groanGapMin: 1.8,
-  groanGapMax: 3.2,
+  /** 每只丧尸两次低吼的间隔范围（秒）；runner 的嘶叫再乘 runnerGroanScale */
+  groanMin: 3,
+  groanMax: 7,
+  runnerGroanScale: 1.5,
+  /** 离主控这么近（米）的丧尸低吼不受全场间隔限制（同时发声数仍由音频系统按远近裁剪） */
+  groanNear: 14,
+  /** 更远的丧尸：全场任意两次低吼之间的最小间隔范围（秒） */
+  groanGapMin: 0.5,
+  groanGapMax: 1.1,
+  /** 被全场间隔挡住时，多久后再试（秒），不必等完整的低吼周期 */
+  groanRetryMin: 0.4,
+  groanRetryMax: 1,
+  /** 叫声的可闻范围（米），超出不触发、不占全场间隔；与音效表的 maxDistance 大致对应 */
+  hearRange: 52,
+  /** 脚步的可闻范围（米） */
+  stepHearRange: 24,
   /** 刷出时低吼的概率（tank 必定咆哮） */
   spawnGroanChance: 0.3,
+  /** 首次在该距离（米）内锁定目标时发出“发现”嘶吼 */
+  alertRange: 24,
+  /** 全场两次“发现”嘶吼之间的最小间隔（秒） */
+  alertSfxGap: 0.35,
   /** 全场两次攻击音效之间的最小间隔（秒） */
   attackSfxGap: 0.12,
+  /** 单只丧尸两次中弹闷哼的间隔范围（秒） */
+  hurtGapMin: 0.7,
+  hurtGapMax: 1.2,
+  /** 全场两次中弹闷哼之间的最小间隔（秒），扫射一群时不至于连成一片 */
+  hurtSfxGap: 0.1,
+  /** 嘴部高度占身高的比例（叫声从这里发出） */
+  mouthRatio: 0.88,
   /** tank 每走多远响一次脚步（米） */
   tankStride: 0.9,
+  /** common 拖步、runner 奔跑的脚步间距（米） */
+  commonStride: 0.75,
+  runnerStride: 1.3,
 } as const
 
 /** 场上（或对象池里）的一只丧尸 */
@@ -185,8 +209,14 @@ export class Zombie implements EnemyActor {
   wanderScale = 0
 
   groanTimer = 0
-  /** tank 脚步累计距离 */
+  /** 脚步累计距离 */
   stride = 0
+  /** 本次刷出后是否已经发出过“发现目标”的嘶吼 */
+  alerted = false
+  /** 距离下次允许中弹闷哼的剩余时间 */
+  hurtGap = 0
+  /** 这只丧尸的嗓音音高倍率（刷出时随机），让同类丧尸听起来不是同一个声音 */
+  voicePitch = 1
 
   deathTimer = 0
   /** 死亡时的脚底高度（下沉基准） */

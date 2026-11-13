@@ -1,13 +1,16 @@
 /**
  * 撤离系统：救援直升机的进场、悬停缓降、Boss 死后降落、登机倒计时与起飞离场。
  * 模型来自 ctx.models.createHelicopter()，这里只负责 root 的位姿并每帧驱动 rig.update。
+ * 登机：落地后站进舱门外 INTERACT.boardRange 的范围即可登机（主控需按 E），登机时分配座位；
+ * 队友模型挂到 seatAnchor 上坐下（见 teammates.ts），主控相机贴在 seatWorld。
  *
  * 机身姿态：root.rotation 用 YXZ 顺序（先偏航，再绕机身横轴俯仰，最后滚转），rotation.x 为正时机头下压。
  * 落地朝向 LAND_YAW 让机头朝西，+X 侧舱门朝南（+Z，主控出生的一侧）。
  */
 
-import { Vector3 } from 'three'
-import { EVAC, PAD } from '../core/config'
+import { Mesh, Texture, Vector3 } from 'three'
+import type { Material } from 'three'
+import { EVAC, INTERACT, PAD } from '../core/config'
 import type { Combatant, EvacSystem, GameContext, HeliState, HelicopterAnimInput } from '../core/types'
 import { clamp, damp, dampAngle, invLerp, lerp, smoothstep, wrapAngle, yawOf } from '../utils/math'
 
@@ -67,6 +70,14 @@ const WASH_RADIUS = 20
 const DUST_COUNT = 40
 const DUST_RING_BURSTS = 6
 const DUST_RING_RADIUS = 3.5
+/**
+ * begin() 之前的停放高度：停机坪正下方 1000 米。
+ * 直升机从开局就保持 visible，场景里的点光源数量因此始终不变，不会在 Boss 登场时触发全场着色器重编译。
+ * 这个深度超出相机远裁剪面（800 米），机体不会被绘制；也远在太阳阴影相机（以场地中心为准，far 260 米）之外，不投影。
+ */
+const PARK_Y = -1000
+/** 起飞后机头前倾在多长的进度区间内渐入（按起飞进度 u 计） */
+const DEPART_PITCH_RAMP = 0.4
 
 /** 时间进度 0..1；duration 不为正时视为已完成 */
 function progress(elapsed: number, duration: number): number {
@@ -166,9 +177,23 @@ export function createEvac(ctx: GameContext): EvacSystem {
   }
 
   root.rotation.order = 'YXZ'
-  root.visible = false
+  // 开局即可见，但停在地下深处（见 PARK_Y）；begin() 时再移到进场起点
+  root.visible = true
   applyPose()
+  root.position.set(landPos.x, PARK_Y, landPos.z)
   ctx.scene.add(root)
+
+  // 贴图（蒙皮贴花等画布贴图）在工厂里先上传到显卡，避免直升机第一次进入视野那帧集中上传
+  root.traverse((node) => {
+    if (!(node instanceof Mesh)) return
+    const mats: readonly Material[] = Array.isArray(node.material) ? node.material : [node.material]
+    for (const mat of mats) {
+      const values: unknown[] = Object.values(mat)
+      for (const value of values) {
+        if (value instanceof Texture) ctx.renderer.initTexture(value)
+      }
+    }
+  })
 
   /** 直升机出现在东南远空，开始进场 */
   const begin = (): void => {
@@ -179,7 +204,7 @@ export function createEvac(ctx: GameContext): EvacSystem {
     yaw = approachYaw
     pitch = APPROACH_PITCH
     bob = 0
-    root.visible = true
+    // 从地下停放点移到进场起点；root 一直可见，这里只改位姿
     applyPose()
     lastMove.set(0, 0, 0)
   }
@@ -286,17 +311,26 @@ export function createEvac(ctx: GameContext): EvacSystem {
     if (countdown <= 0 || earlyTimer >= EARLY_DEPART_DELAY) takeOff()
   }
 
-  /** 起飞：先垂直拉升，再沿机头方向加速飞离；departed 之后按末速继续飞一段 */
+  /**
+   * 起飞：先垂直拉升，再沿机头方向加速飞离；departed 之后继续飞一段，速度在 DEPART_COAST 秒内线性降到 0。
+   * 位置对时间一阶连续（起步、departed 交界、滑行结束处速度都不跳变），俯仰目标也是平滑曲线。
+   */
   const updateDeparture = (dt: number): void => {
     departTimer = Math.min(departTimer + dt, departDuration + DEPART_COAST)
-    const u = departTimer / departDuration
+    // 滑行段的等效时间：速度比例 glide 从 1 线性降到 0，积分为 extra - extra² / (2·COAST)
+    const extra = Math.max(0, departTimer - departDuration)
+    const glide = 1 - extra / DEPART_COAST
+    const coast = extra - (extra * extra) / (2 * DEPART_COAST)
+    const u = (Math.min(departTimer, departDuration) + coast) / departDuration
     const forward = accelerate((u - DEPART_VERTICAL_PORTION) / (1 - DEPART_VERTICAL_PORTION))
     base.set(
       landPos.x + departDirX * DEPART_DISTANCE * forward,
       landPos.y + DEPART_CLIMB * accelerate(u),
       landPos.z + departDirZ * DEPART_DISTANCE * forward,
     )
-    pitch = damp(pitch, u > DEPART_VERTICAL_PORTION ? DEPART_PITCH : 0, POSE_RATE, dt)
+    // 前倾随水平加速渐入，滑行减速时随速度收平
+    const pitchTarget = DEPART_PITCH * smoothstep((u - DEPART_VERTICAL_PORTION) / DEPART_PITCH_RAMP) * glide
+    pitch = damp(pitch, pitchTarget, POSE_RATE, dt)
     door = Math.max(0, door - dt / DOOR_CLOSE_TIME)
     if (state === 'departing' && u >= 1) {
       state = 'departed'
@@ -322,10 +356,39 @@ export function createEvac(ctx: GameContext): EvacSystem {
     if (strength > 0) ctx.effects.rotorWash(padCenter, strength)
   }
 
-  const canBoard = (who: Combatant): boolean =>
-    state === 'landed' &&
-    who.status === 'alive' &&
-    Math.hypot(who.position.x - PAD.x, who.position.z - PAD.z) <= PAD.radius
+  /* ── 座位 ── */
+
+  const seatCount = rig.seats.length
+  const playerSeat = clamp(rig.playerSeat, 0, Math.max(0, seatCount - 1))
+  /** 各座位上的乘员；空座位为 null */
+  const occupants: (Combatant | null)[] = Array.from({ length: seatCount }, () => null)
+  const doorScratch = new Vector3()
+  const dirScratch = new Vector3()
+
+  const seatOf = (who: Combatant): number => occupants.indexOf(who)
+
+  /**
+   * 给 who 挑一个空座位：主控优先坐 playerSeat；队友按编号坐其余空位，没有时才占用主控的座位。
+   * @returns 座位编号；满员为 -1
+   */
+  const pickSeat = (who: Combatant): number => {
+    if (who.id === ctx.player.actor.id && occupants[playerSeat] === null) return playerSeat
+    let fallback = -1
+    for (let i = 0; i < seatCount; i++) {
+      if (occupants[i] !== null) continue
+      if (i !== playerSeat) return i
+      fallback = i
+    }
+    return fallback
+  }
+
+  /** 已降落、存活、站在舱门登机范围内、且还有空座位 */
+  const canBoard = (who: Combatant): boolean => {
+    if (state !== 'landed' || who.status !== 'alive') return false
+    rig.doorPoint.getWorldPosition(doorScratch)
+    if (Math.hypot(who.position.x - doorScratch.x, who.position.z - doorScratch.z) > INTERACT.boardRange) return false
+    return seatOf(who) < 0 && pickSeat(who) >= 0
+  }
 
   /** update 开头记下的 root 位置，用来算本帧位移 */
   const prevPos = new Vector3()
@@ -362,8 +425,24 @@ export function createEvac(ctx: GameContext): EvacSystem {
 
     board(who) {
       if (!canBoard(who)) return
+      occupants[pickSeat(who)] = who
       who.board()
       ctx.events.emit('boarded', { who })
+    },
+
+    seatCount,
+
+    occupants,
+
+    seatOf,
+
+    seatAnchor(index) {
+      return rig.seats[index] ?? null
+    },
+
+    seatYaw() {
+      rig.seat.getWorldDirection(dirScratch)
+      return yawOf(dirScratch.x, dirScratch.z)
     },
 
     seatWorld(out) {

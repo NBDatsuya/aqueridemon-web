@@ -7,7 +7,7 @@
  */
 
 import { Vector3 } from 'three'
-import { BOSS, BOSS_ENTRY, FIELD, PLAY_BOUNDS, PLAYER } from '../core/config'
+import { BOSS, BOSS_ENTRY, BOSS_WARNING, FIELD, PLAY_BOUNDS, PLAYER } from '../core/config'
 import type {
   BossAnimInput,
   BossAnimMode,
@@ -93,12 +93,13 @@ const SHAKE = {
   death: { strength: 0.24, duration: 1.5 },
 } as const
 
-const WARN_SWEEP = '触手横扫！横向闪避'
-const WARN_STAB = '触手突刺！左右闪避'
-const WARN_SPIT = '毒液喷射！'
-const WARN_STAGGER = '弱点暴露！集火头部核心'
-const WARN_SHOCK = '冲击波！跳跃躲避'
-const WARN_PRONE = '背部核心暴露！'
+/** 预警文案统一取自 config，HUD 显示与队友 AI 的判断用同一份 */
+const WARN_SWEEP = BOSS_WARNING.sweep
+const WARN_STAB = BOSS_WARNING.stab
+const WARN_SPIT = BOSS_WARNING.spit
+const WARN_STAGGER = BOSS_WARNING.stagger
+const WARN_SHOCK = BOSS_WARNING.shock
+const WARN_PRONE = BOSS_WARNING.prone
 
 /* ── 由 config 推出的常量 ── */
 
@@ -1042,6 +1043,7 @@ export function createBoss(ctx: GameContext): BossSystem {
     raycast,
     applyDamage,
     aimPoint,
+    poisonPools: pools,
     takeSample,
     update,
     dispose,

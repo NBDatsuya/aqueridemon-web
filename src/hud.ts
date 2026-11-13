@@ -7,6 +7,7 @@ export { default as ScrollableContent } from './components/scrollable-content.vu
 export { default as SettingsPanel } from './components/settings-panel.vue';
 export { default as MmkdStarterCredit } from './components/mmkd-starter-credit.vue';
 export { default as GameShellLayout } from './components/game-shell-layout.vue';
+export { default as LoadingOverlay } from './components/loading-overlay.vue';
 
 // Universal Game Jam Pages (files: kebab-case, exports: PascalCase)
 export { default as HomePage } from './pages/home.vue';

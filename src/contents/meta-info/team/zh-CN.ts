@@ -11,8 +11,8 @@ const zhCN: TeamInfo = {
   description: '让 Game Jam 3D 原型创作像呼吸一样自然。',
   members: [
     {
-      name: 'Jammer',
-      role: '3D 程序员 / 策划',
+      name: 'Saša',
+      role: '策划、程序',
     },
   ],
 }

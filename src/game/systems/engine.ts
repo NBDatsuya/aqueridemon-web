@@ -1,5 +1,5 @@
 /**
- * 游戏引擎：创建各系统、推进每帧更新、管理阶段流转（选枪 → 准备 → 三波 → Boss → 撤离 → 结局）、
+ * 游戏引擎：创建各系统、推进每帧更新、管理阶段流转（开局准备 → 三波 → Boss → 撤离 → 结局）、
  * 统计数据，并把状态同步到 HUD（core/state.ts）。
  */
 
@@ -20,6 +20,7 @@ import {
   WEAPONS,
 } from '../core/config'
 import { createEvents } from '../core/events'
+import { gameLoading } from '../core/loading'
 import { bindHudActions, hud, resetHud } from '../core/state'
 import type { HudEnding } from '../core/state'
 import type {
@@ -31,7 +32,6 @@ import type {
   MusicTrack,
   System,
   TeammateId,
-  WeaponId,
 } from '../core/types'
 import { createAudio } from '../generators/audio'
 import { actorModels } from '../generators/geometry'
@@ -113,7 +113,7 @@ export function createEngine(options: EngineOptions): GameEngine {
     renderer,
     rng: createRng(GAME_SEED ^ (Date.now() & 0xffff)),
     events,
-    time: { elapsed: 0, phase: 'select' as GamePhase, scale: 1, frame: 0 },
+    time: { elapsed: 0, phase: 'prep' as GamePhase, scale: 1, frame: 0 },
     stats: { kills: { common: 0, runner: 0, tank: 0 }, shotsFired: 0, shotsHit: 0, headshots: 0 },
     models: actorModels,
     audio,
@@ -137,9 +137,12 @@ export function createEngine(options: EngineOptions): GameEngine {
   const updateOrder: System[] = [player, teammates, enemies, boss, airdrops, evac, world, effects]
   const allSystems: System[] = [input, ...updateOrder]
   allSystems.forEach((system) => system.init?.())
-  player.setControl(false)
 
-  // 选枪界面期间一次性编译全场着色器：Boss、直升机与特效此刻都已挂在场景里（不可见），
+  // 开局：主武器箱已经摆在地上，小队成员各自跑去开箱取枪（每人限开几个）
+  airdrops.deployWeaponCrates()
+  player.setControl(true)
+
+  // 开局静默期一次性编译全场着色器：Boss、直升机与特效此刻都已挂在场景里（不可见），
   // 提前编译掉 Boss 登场那一刻才会触发的首次编译，消除登场卡顿
   renderer.compile(scene, camera)
 
@@ -149,8 +152,8 @@ export function createEngine(options: EngineOptions): GameEngine {
   let shellPaused = false
   let frozen = false
   let wasLocked = false
-  /** 准备期剩余秒数 */
-  let phaseTimer = 0
+  /** 开局静默期剩余秒数：走完直接开始第 1 波，期间不做任何倒计时提示 */
+  let phaseTimer = PREP_DURATION
   /** Round Clear 到下一波 / Boss 战的剩余秒数；未触发为 -1 */
   let clearTimer = -1
   /** 等待开启的下一波序号（clearTimer >= 0 时有效） */
@@ -223,10 +226,8 @@ export function createEngine(options: EngineOptions): GameEngine {
 
   const objectiveFor = (phase: GamePhase): string => {
     switch (phase) {
-      case 'select':
-        return '选择你的武器'
       case 'prep':
-        return '感染者正在逼近，守住绿茵场'
+        return '打开主武器箱取出武器，守住绿茵场'
       case 'wave':
         return `抵御第 ${enemies.wave} 波尸潮`
       case 'boss':
@@ -252,7 +253,8 @@ export function createEngine(options: EngineOptions): GameEngine {
     time.phase = 'boss'
     boss.spawn()
     evac.begin()
-    if (AIRDROP.atBoss > 0) airdrops.drop(AIRDROP.atBoss)
+    if (AIRDROP.atBoss > 0) airdrops.drop(AIRDROP.atBoss, 'boss')
+    bossSupplyTimer = AIRDROP.bossInterval
     setMusic('boss')
     showBanner(`${BOSS.name}登场`, '救援直升机正在赶来', 'danger', 5)
   }
@@ -398,14 +400,14 @@ export function createEngine(options: EngineOptions): GameEngine {
     }),
     events.on('sampleTaken', () => showBanner('已获得阿奎尔样本', '带着它登上直升机', 'success')),
     events.on('airdropIncoming', ({ count }) => {
-      if (time.phase === 'boss') return
       pushSubtitle('指挥部', '#9fe6a0', `已空投下 ${count} 个补给包，希望对你们有帮助`)
     }),
     events.on('airdropPicked', ({ crate, who }) => {
       if (!who.isPlayer) return
       const content = crate.content
-      if (content.kind === 'weapon') showBanner(`获得 ${WEAPONS[content.weapon].name}`, '弹药已补满', 'info', 2.5)
-      else if (content.kind === 'ammo') showBanner('弹药箱', '当前武器弹药已补满', 'info', 2.5)
+      // 开主武器箱不做任何提示：横幅会占住回合提示的位置
+      if (content.kind === 'weapon') return
+      if (content.kind === 'ammo') showBanner('弹药箱', '当前武器弹药已补满', 'info', 2.5)
       else showBanner('医疗包', `生命 +${AIRDROP.medkitHeal}`, 'success', 2.5)
     }),
     events.on('weaponChoice', ({ crate, weapon }) => {
@@ -432,7 +434,7 @@ export function createEngine(options: EngineOptions): GameEngine {
 
   /** 控制台关闭后回到游戏；仅在需要指针锁定的场合重新锁定（须在用户手势里调用） */
   const resumeFromCheat = (): void => {
-    if (shellPaused || time.phase === 'select' || hud.weaponChoice !== null) return
+    if (shellPaused || time.phase === 'ending' || hud.weaponChoice !== null) return
     input.requestLock()
   }
 
@@ -467,7 +469,7 @@ export function createEngine(options: EngineOptions): GameEngine {
     }
     const bossPending = time.phase === 'prep' || time.phase === 'wave'
     if (!bossPending) {
-      hud.cheatError = time.phase === 'select' ? '先选好武器再使用作弊' : '阿奎尔已经到场'
+      hud.cheatError = '阿奎尔已经到场'
       return
     }
     audio.play('click')
@@ -479,13 +481,13 @@ export function createEngine(options: EngineOptions): GameEngine {
   /* ── 指针锁定恢复 ── */
 
   /**
-   * 点击画面重新锁定指针。
+   * 点击画面锁定指针。开局没有选枪菜单，进入游戏时往往还缺少用户手势，要等玩家点一下画面才锁得上。
    * 用户按 ESC 退出锁定后浏览器有一段冷却期（Chrome 约 1.25 秒），暂停菜单点“继续”时的
    * 立即重锁可能被静默拒绝；此后在画面上点一下即可恢复鼠标控制（点击算用户手势）。
    */
   const onCanvasClick = (): void => {
     if (disposed) return
-    if (time.phase === 'select' || time.phase === 'ending') return
+    if (time.phase === 'ending') return
     if (shellPaused || hud.cheatOpen || hud.weaponChoice !== null) return
     input.requestLock()
   }
@@ -494,18 +496,6 @@ export function createEngine(options: EngineOptions): GameEngine {
   /* ── HUD 操作 ── */
 
   bindHudActions({
-    selectWeapon(weapon: WeaponId): void {
-      if (time.phase !== 'select') return
-      unlockAudio()
-      audio.play('click')
-      player.equipInitial(weapon)
-      player.setControl(true)
-      time.phase = 'prep'
-      phaseTimer = PREP_DURATION
-      setMusic('intermission')
-      input.requestLock()
-      showBanner('守住绿茵场', `第 1 波 ${PREP_DURATION} 秒后到来`, 'info', 4)
-    },
     resolveWeaponChoice(slot: number | null): void {
       if (!pendingCrate) return
       airdrops.resolveChoice(pendingCrate, player.actor, slot)
@@ -522,9 +512,11 @@ export function createEngine(options: EngineOptions): GameEngine {
     },
   })
 
-  // 进入游戏页通常已有过用户点击，先尝试解锁以播放选枪界面的氛围音
-  setMusic('menu')
+  // 开局没有菜单：直接进入静默准备期。进入游戏页通常已有过用户点击，先尝试解锁音频；
+  // 指针锁定同样先请求一次，被浏览器拒绝（缺少用户手势）时等玩家点一下画面就能锁上
+  setMusic('intermission')
   unlockAudio()
+  input.requestLock()
 
   /* ── HUD 同步 ── */
 
@@ -614,7 +606,6 @@ export function createEngine(options: EngineOptions): GameEngine {
     // 剩余NPC = 本波总数 - 已击杀（含尚未刷出的），开局即等于关卡规定数量；
     // Boss 战波次已清零，回退为场上存活数，把召唤的小怪也计入
     hud.enemiesAlive = Math.max(enemies.waveTotal - enemies.waveKilled, enemies.active.length)
-    hud.timer = time.phase === 'prep' ? Math.ceil(phaseTimer) : -1
 
     hud.hp = Math.ceil(actor.hp)
     hud.status = actor.status
@@ -701,6 +692,14 @@ export function createEngine(options: EngineOptions): GameEngine {
       phaseTimer -= realDt
       if (phaseTimer <= 0) beginWave(1)
     }
+    // Boss 战期间定时补给弹药与医疗包（落点被未拾取的箱子占满时会少投）
+    if (time.phase === 'boss' && boss.alive) {
+      bossSupplyTimer -= realDt
+      if (bossSupplyTimer <= 0) {
+        bossSupplyTimer = AIRDROP.bossInterval
+        airdrops.drop(AIRDROP.perDrop, 'boss')
+      }
+    }
     if (clearTimer >= 0) {
       clearTimer -= realDt
       if (clearTimer <= 0) {
@@ -752,10 +751,16 @@ export function createEngine(options: EngineOptions): GameEngine {
   return {
     update(delta: number): void {
       if (disposed) return
+      // 加载遮罩还挂着（预编译着色器、预上传贴图）时不推进游戏：开局静默期要等遮罩撤掉才开始计时
+      if (gameLoading.active) {
+        input.reset()
+        input.endFrame()
+        return
+      }
       const realDt = Math.min(Math.max(delta, 0), MAX_DELTA_TIME)
-      const playing = time.phase !== 'select' && time.phase !== 'ending'
+      const playing = time.phase !== 'ending'
 
-      // 选枪与结局界面需要鼠标点击：外壳“重新开始”可能带着锁定进来，这里放开
+      // 结局界面需要鼠标点击：外壳“重新开始”可能带着锁定进来，这里放开
       if (!playing && input.locked) input.exitLock()
 
       // 游戏中按 ESC（或切走窗口）会被浏览器用来退出指针锁定，这次按键到不了暂停菜单。
@@ -792,6 +797,11 @@ export function createEngine(options: EngineOptions): GameEngine {
       const dt = realDt * time.scale
       for (const system of updateOrder) system.update(dt)
 
+      // 已登机：主控系统先于撤离系统更新，那时取到的座位位置要靠上一帧位移外推，飞得快就会抖。
+      // 所有系统更新完后再把相机贴到座位上，此时直升机本帧位姿已定，位置是精确的（也不叠加屏幕震动）
+      // 刚登机的 INTERACT.seatBlendTime 秒内再叠加主控系统给出的就座过渡偏移
+      if (player.actor.status === 'boarded') evac.seatWorld(camera.position).add(player.seatOffset)
+
       tickPhase(realDt)
       tickUi(realDt)
       syncHud()
@@ -800,7 +810,7 @@ export function createEngine(options: EngineOptions): GameEngine {
 
     setPaused(paused: boolean): void {
       shellPaused = paused
-      if (!paused && time.phase !== 'select' && time.phase !== 'ending') input.requestLock()
+      if (!paused && time.phase !== 'ending') input.requestLock()
     },
 
     setVolumes(bgm: number, sfx: number, muted: boolean): void {

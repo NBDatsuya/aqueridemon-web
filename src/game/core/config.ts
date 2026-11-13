@@ -107,7 +107,18 @@ export const INTERACT = {
   airdropRange: 2.2,
   sampleRange: 3,
   sampleTime: 3,
-  boardTime: 2,
+  /** 登机不读条：主控在登机范围内按一下 E 就座，AI 走进范围即登机（SPEC 原为按住 E 2 秒） */
+  boardTime: 0,
+  /** 登机范围：距舱门外登机点的水平距离（米）。登机点在舱门外约 1.3m，范围覆盖舱门前的一片地面 */
+  boardRange: 3,
+  /** 主控就座时相机从站位移到座位的过渡时长（秒） */
+  seatBlendTime: 0.4,
+  /** AI 队友从舱门口坐进座位的过渡时长（秒） */
+  mateSeatTime: 0.6,
+  /** 就座后可环顾的范围：以正对舱门为中心的左右偏航半角、俯视 / 仰视上限（弧度） */
+  seatYawLimit: (110 * Math.PI) / 180,
+  seatPitchDown: (65 * Math.PI) / 180,
+  seatPitchUp: (45 * Math.PI) / 180,
 } as const
 
 export const HEADSHOT = {
@@ -176,9 +187,14 @@ export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
     reloadThreshold: 0.3,
     preferredWeapons: ['ak47', 'mg3'],
     style: 'aggressive',
-    followRight: 0,
-    followForward: 8,
+    // 右翼偏后，不站在主控视野正前方
+    followRight: 6,
+    followForward: -1,
     moveSpeed: 6.2,
+    postMin: 10,
+    postMax: 24,
+    postBearing: 1.15,
+    leash: 30,
   },
   manman: {
     engageRange: 25,
@@ -190,6 +206,10 @@ export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
     followRight: 4,
     followForward: -5,
     moveSpeed: 6,
+    postMin: 5,
+    postMax: 11,
+    postBearing: 2.5,
+    leash: 15,
   },
   z91: {
     engageRange: 28,
@@ -201,6 +221,10 @@ export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
     followRight: -8,
     followForward: 1,
     moveSpeed: 6,
+    postMin: 8,
+    postMax: 18,
+    postBearing: -1.35,
+    leash: 22,
   },
 }
 
@@ -228,6 +252,55 @@ export const AI_SHOOTING = {
   followMax: 10,
 } as const
 
+/** AI 队友的走位、避险与避障调参（补充） */
+export const TEAMMATE_TACTICS = {
+  /** 主控视野锥：半角（弧度，约 ±31°）、纵深（米）、近处的最小半宽（米）；队友的站位不落在锥内 */
+  viewConeHalf: 0.55,
+  viewConeRange: 35,
+  viewConeMinWidth: 1.8,
+  /** 移出视野锥时在锥边外再留的余量（米） */
+  viewConeExit: 1,
+  /** 站在锥内多久才让开（秒）；主控正在开火时立即让开 */
+  viewConeDelay: 0.6,
+  /** 自主站位的重新评估间隔（秒） */
+  postIntervalMin: 4,
+  postIntervalMax: 7,
+  /** 新站位得分要高出当前站位这么多才换（滞回） */
+  postSwitchMargin: 0.6,
+  /** 到达站位的判定半径；离站位超过 postArrive × postDepart 才重新出发 */
+  postArrive: 1.8,
+  postDepart: 2.5,
+  /** 队友站位之间希望保持的间距（米） */
+  postSpacing: 8,
+  /** 威胁评估的扫描半径（米）与按种类的权重 */
+  threatScan: 14,
+  threatWeight: { common: 1, runner: 1.6, tank: 4 },
+  /** 丧尸表面距离小于该值开始后撤（按种类，米）；拉开到再多 kiteStopMargin 才停 */
+  kiteStart: { common: 3, runner: 4.5, tank: 6.5 },
+  kiteStopMargin: 1.5,
+  /** 威胁总压力超过该值也后撤（滞回：降到 0.6 倍以下才停） */
+  pressureKite: 2.4,
+  /** 8 个方位扇区里有这么多个有丧尸即视为被包围 */
+  surroundSectors: 5,
+  /** 换弹 / 弹匣快空时，丧尸在该距离内就边退边换 */
+  reloadRetreatRange: 9,
+  /** 后撤方向的重新评估间隔（秒） */
+  escapeInterval: 0.25,
+  /** 毒池（含预警中的落点）外扩的躲避余量（米） */
+  poisonMargin: 1.2,
+  /** 避障：方向重新采样间隔（秒）、采样方向数、探测距离（米）、速度平滑速率（1/秒） */
+  steerInterval: 0.1,
+  steerRays: 9,
+  steerLook: 4,
+  steerAccel: 10,
+  /** 避开其他成员身体的探测半径（米） */
+  crowdRadius: 2.5,
+  /** 卡住后绕行点的最远距离（米）与最长持续时间（秒）；连续卡住这么多次就重新规划 */
+  detourMax: 4,
+  detourTime: 1.5,
+  replanAfterStuck: 3,
+} as const
+
 /* ── 武器 ── */
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
@@ -239,7 +312,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     damage: 35,
     rpm: 600,
     magSize: 30,
-    reserveMax: 120,
+    reserveMax: 180,
     reloadTime: 2.5,
     falloffStart: 40,
     falloffEnd: 70,
@@ -256,7 +329,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     damage: 25,
     rpm: 900,
     magSize: 100,
-    reserveMax: 200,
+    reserveMax: 600,
     reloadTime: 4,
     falloffStart: 50,
     falloffEnd: 85,
@@ -273,7 +346,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     damage: 20,
     rpm: 800,
     magSize: 30,
-    reserveMax: 150,
+    reserveMax: 180,
     reloadTime: 1.8,
     falloffStart: 25,
     falloffEnd: 50,
@@ -290,7 +363,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     damage: 32,
     rpm: 650,
     magSize: 30,
-    reserveMax: 120,
+    reserveMax: 180,
     reloadTime: 2.2,
     falloffStart: 50,
     falloffEnd: 85,
@@ -312,7 +385,7 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   common: {
     type: 'common',
     name: '普通丧尸',
-    hp: 100,
+    hp: 200,
     speed: 2,
     damage: 20,
     attackInterval: 1.5,
@@ -326,7 +399,7 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   runner: {
     type: 'runner',
     name: '快速丧尸',
-    hp: 70,
+    hp: 140,
     speed: 6,
     damage: 15,
     attackInterval: 1,
@@ -340,7 +413,7 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   tank: {
     type: 'tank',
     name: '坦克丧尸',
-    hp: 300,
+    hp: 600,
     speed: 1,
     damage: 40,
     attackInterval: 2.5,
@@ -378,7 +451,7 @@ export const WAVES: readonly WaveDef[] = [
       { at: 0, spawn: { common: 8 } },
       { at: 30, spawn: { common: 7 } },
     ],
-    airdrops: 1,
+    airdrops: 4,
   },
   {
     wave: 2,
@@ -386,7 +459,7 @@ export const WAVES: readonly WaveDef[] = [
       { at: 0, spawn: { common: 11, runner: 6 } },
       { at: 45, spawn: { common: 6, runner: 2 } },
     ],
-    airdrops: 2,
+    airdrops: 4,
   },
   {
     wave: 3,
@@ -415,8 +488,34 @@ export const SPAWN_RULES = {
   farDistance: 30,
 } as const
 
-/** 选完武器到第 1 波开始的准备时间（SPEC 的 0:00-0:30 含选枪时间，这里取选枪后的部分） */
-export const PREP_DURATION = 10
+/**
+ * 开局静默时长：进入游戏后不做任何提示，静默这么久就直接开始第 1 波（补充）。
+ * 小队成员需要在这段时间里跑到地上的主武器箱前开箱取枪。
+ */
+export const PREP_DURATION = 3
+
+/* ── 开局主武器箱 ── */
+
+/**
+ * 开局主武器箱（补充）：取代原来的菜单选枪。
+ * 箱子一开始就摆在出生点周围的地面上，箱内主武器随机；每人最多开 perPerson 个，正好凑满主武器槽位。
+ * TODO: 副武器（手枪一类）尚未实现，届时箱子与携带槽位要区分主 / 副武器。
+ */
+export const WEAPON_CRATES = {
+  /** 每名小队成员最多能开几个（= 主武器槽位数） */
+  perPerson: 2,
+  /** 落点：散在小队出生点（0, 8）四周，避开中圈停机坪；数量 = 小队人数 × perPerson */
+  points: [
+    { x: -5, z: 6 },
+    { x: -3, z: 11 },
+    { x: -0.5, z: 13 },
+    { x: 2.5, z: 12 },
+    { x: 5, z: 9.5 },
+    { x: 5.5, z: 5.5 },
+    { x: 3, z: 6 },
+    { x: -3, z: 5.5 },
+  ],
+} as const
 
 /* ── Boss：阿奎尔巨兽 ── */
 
@@ -478,10 +577,16 @@ export const BOSS = {
 /* ── 空投 ── */
 
 export const AIRDROP = {
-  /** 按后来的要求不再空投武器，只投弹药和医疗包（SPEC 原为 70% / 20% / 10%） */
-  weaponChance: 0,
-  ammoChance: 0.6,
-  medkitChance: 0.4,
+  /**
+   * 波次空投的内容权重：只投子弹与主武器。
+   * 子弹箱是原来的军用补给箱样式，主武器箱是硬箱样式。
+   */
+  waveMix: { weapon: 0.35, ammo: 0.65, medkit: 0 },
+  /**
+   * Boss 战补给的内容权重：只投子弹与医疗包。
+   * 医疗包箱是白箱蓝十字样式。
+   */
+  bossMix: { weapon: 0, ammo: 0.55, medkit: 0.45 },
   fallTime: 3,
   /** 起始高度（补充） */
   startHeight: 45,

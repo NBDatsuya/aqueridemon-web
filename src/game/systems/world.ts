@@ -18,7 +18,7 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three'
-import type { BufferGeometry, Material, Object3D } from 'three'
+import type { BufferGeometry, Material, Object3D, PerspectiveCamera } from 'three'
 import {
   AIRDROP_POINTS,
   BLEACHERS,
@@ -33,12 +33,12 @@ import {
 } from '../core/config'
 import type { Collider, GameContext, RayHit, WorldSystem } from '../core/types'
 import {
+  createForest,
   disposeProps,
   generateBarrier,
   generateBench,
   generateBillboard,
   generateBleacherWreck,
-  generateBuilding,
   generateBus,
   generateCar,
   generateDeskPile,
@@ -46,15 +46,17 @@ import {
   generateFence,
   generateGate,
   generateGoal,
+  generateGym,
   generateLampPost,
   generateLocker,
   generateSandbags,
+  generateSchool,
   generateTires,
   generateTrashBin,
-  generateTree,
   generateWall,
 } from '../generators/geometry/props'
-import type { Prop } from '../generators/geometry/props'
+import type { Prop, TreeSpot } from '../generators/geometry/props'
+import { createHills } from '../generators/geometry/terrain'
 import { createSkyMaterial } from '../generators/textures'
 import { createSurfaceMaterial } from '../generators/textures/pbr'
 import { QUALITY_PROFILES, renderState } from '../render/settings'
@@ -79,17 +81,26 @@ const FOG_FAR = 420
 /** 天空穹顶半径（相机 far 为 800） */
 const SKY_RADIUS = 600
 /**
- * 写实光照：太阳直射光投射实时阴影，环境光主要来自天空烘焙的环境贴图，
- * 环境光与半球光只留少量补光。这套数值取代了 SPEC 早先的“环境光 0.6 + 方向光 0.8、不用实时阴影”，
+ * 写实光照：太阳直射光投射实时阴影，天光主要来自天空烘焙的环境贴图（不含日轮，避免与太阳重复），
+ * 半球光补一点天地色差，环境光只防止死黑。这套数值取代了 SPEC 早先的“环境光 0.6 + 方向光 0.8、不用实时阴影”，
  * 依据是后来“高质感写实画风”的要求。
  */
-const AMBIENT_INTENSITY = 0.25
-const HEMI_INTENSITY = 0.35
-const SUN_INTENSITY = 3.2
+const AMBIENT_INTENSITY = 0.06
+const HEMI_INTENSITY = 0.42
+const SUN_INTENSITY = 3.3
 /** 天空环境贴图的照明与反射强度 */
-const ENV_INTENSITY = 0.75
-/** 太阳阴影覆盖的半边长（米）：盖住整个可活动区域 */
-const SHADOW_EXTENT = 72
+const ENV_INTENSITY = 0.85
+/** 太阳方向（从地面指向太阳）：东北方高空，+X 东，-Z 北 */
+const SUN_DIR = new Vector3(60, 80, -50).normalize()
+/** 阴影相机离阴影框中心的距离（米），要高过最高的投影物 */
+const SUN_DISTANCE = 160
+/** 没有游戏相机（标题背景）时的静态阴影框半边长（米）：盖住整个可活动区域 */
+const STATIC_SHADOW_EXTENT = 72
+/** 阴影框中心放在相机前方多远（占半边长的比例），把精度花在视野里 */
+const SHADOW_LEAD = 0.5
+/** 北侧树林、南侧墙外、两栋楼周边的树木数量上限与最小间距（米） */
+const TREE_COUNT = 96
+const TREE_SPACING = 4.6
 /** 避障：向前探测的距离（米） */
 const STEER_LOOK = 2.5
 /** 避障：绕行拐角距障碍物的额外间隙（米） */
@@ -173,38 +184,73 @@ export function createWorld(ctx: GameContext): WorldSystem {
   /* ── 光照 ── */
 
   const ambient = new AmbientLight(0xffffff, AMBIENT_INTENSITY)
-  const sun = new DirectionalLight(0xfff2dc, SUN_INTENSITY)
-  // 从东北斜射：+X 东，-Z 北
-  sun.position.set(60, 80, -50)
+  const sun = new DirectionalLight(0xfff0d8, SUN_INTENSITY)
   sun.castShadow = true
   const shadowSize = QUALITY_PROFILES[renderState.quality].shadowMapSize
   sun.shadow.mapSize.set(shadowSize, shadowSize)
-  sun.shadow.camera.left = -SHADOW_EXTENT
-  sun.shadow.camera.right = SHADOW_EXTENT
-  sun.shadow.camera.top = SHADOW_EXTENT
-  sun.shadow.camera.bottom = -SHADOW_EXTENT
-  sun.shadow.camera.near = 10
-  sun.shadow.camera.far = 260
-  sun.shadow.bias = -0.0004
-  sun.shadow.normalBias = 0.06
-  const hemi = new HemisphereLight(0xbfdcff, 0x4a6a3a, HEMI_INTENSITY)
+  sun.shadow.camera.near = 1
+  sun.shadow.camera.far = SUN_DISTANCE + 90
+  sun.shadow.bias = -0.0002
+  const hemi = new HemisphereLight(0xbfdcff, 0x55663f, HEMI_INTENSITY)
   root.add(ambient, sun, sun.target, hemi)
+
+  // 阴影相机的朝向固定（沿 -SUN_DIR 看，up 为 +Y），它的横纵轴用来把阴影框中心对齐到阴影像素
+  const lightRight = new Vector3().crossVectors(new Vector3(0, 1, 0), SUN_DIR).normalize()
+  const lightUp = new Vector3().crossVectors(SUN_DIR, lightRight)
+  const shadowCenter = new Vector3()
+  let shadowExtent = 0
+
+  /**
+   * 把阴影框放到 (x, z) 附近：中心在光照平面内按阴影像素取整，相机移动时阴影边缘不会闪烁。
+   * @param extent 阴影框半边长（米）
+   */
+  const placeShadow = (x: number, z: number, extent: number): void => {
+    const cam = sun.shadow.camera
+    if (extent !== shadowExtent) {
+      shadowExtent = extent
+      cam.left = -extent
+      cam.right = extent
+      cam.top = extent
+      cam.bottom = -extent
+      cam.updateProjectionMatrix()
+    }
+    const texel = (extent * 2) / sun.shadow.mapSize.x
+    // 偏移量与阴影像素相当：既不漏光也不让细物体的阴影脱离底座
+    sun.shadow.normalBias = texel * 1.5
+    const r = Math.round((x * lightRight.x + z * lightRight.z) / texel) * texel
+    const u = Math.round((x * lightUp.x + z * lightUp.z) / texel) * texel
+    const d = x * SUN_DIR.x + z * SUN_DIR.z
+    shadowCenter.set(0, 0, 0).addScaledVector(lightRight, r).addScaledVector(lightUp, u).addScaledVector(SUN_DIR, d)
+    sun.target.position.copy(shadowCenter)
+    sun.position.copy(shadowCenter).addScaledVector(SUN_DIR, SUN_DISTANCE)
+  }
+  placeShadow(0, 0, STATIC_SHADOW_EXTENT)
+
+  // 标题背景只给了 scene / rng / renderer，没有游戏相机：此时阴影框固定盖住整个场地
+  const viewCamera: PerspectiveCamera | undefined = ctx.camera
+  const viewDir = new Vector3()
 
   /* ── 天空 ── */
 
   const skyMaterial = createSkyMaterial()
-  const skyGeometry = new SphereGeometry(SKY_RADIUS, 24, 16)
+  const skySun = skyMaterial.uniforms.uSunDir as { value: Vector3 }
+  skySun.value.copy(SUN_DIR)
+  const skyGeometry = new SphereGeometry(SKY_RADIUS, 32, 20)
   const sky = new Mesh(skyGeometry, skyMaterial)
   sky.frustumCulled = false
   sky.renderOrder = -1
   root.add(sky)
 
-  // 环境反射与天光：把天空烘焙成预滤波环境贴图，金属与光滑表面靠它产生反射
+  // 环境反射与天光：把天空（不含日轮）烘焙成预滤波环境贴图，金属与光滑表面靠它产生反射
   const pmrem = new PMREMGenerator(ctx.renderer)
   const envScene = new Scene()
-  envScene.add(new Mesh(skyGeometry, skyMaterial))
+  const envSkyMaterial = skyMaterial.clone()
+  const envDisc = envSkyMaterial.uniforms.uDisc as { value: number }
+  envDisc.value = 0
+  envScene.add(new Mesh(skyGeometry, envSkyMaterial))
   const envTarget = pmrem.fromScene(envScene, 0, 1, SKY_RADIUS * 2)
   pmrem.dispose()
+  envSkyMaterial.dispose()
   const previousEnvironment = scene.environment
   const previousEnvIntensity = scene.environmentIntensity
   scene.environment = envTarget.texture
@@ -342,11 +388,15 @@ export function createWorld(ctx: GameContext): WorldSystem {
     step.rotation.x = -HALF_PI
     step.scale.set(BLEACHERS.maxX - BLEACHERS.minX, stepDepth, 1)
     step.position.set((BLEACHERS.minX + BLEACHERS.maxX) / 2, height, (minZ + maxZ) / 2)
+    step.receiveShadow = true
+    step.castShadow = true
     root.add(step)
     // 朝南的立面
     const riser = new Mesh(plane, stepMaterial)
     riser.scale.set(BLEACHERS.maxX - BLEACHERS.minX, BLEACHERS.stepHeight, 1)
     riser.position.set((BLEACHERS.minX + BLEACHERS.maxX) / 2, height - BLEACHERS.stepHeight / 2, maxZ)
+    riser.receiveShadow = true
+    riser.castShadow = true
     root.add(riser)
     colliders.push({
       minX: BLEACHERS.minX,
@@ -372,7 +422,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
     generateBench,
     generateLocker,
     generateTires,
-    () => generateCar(0x3a5a7a),
+    () => generateCar(0x3a5a7a, { style: 'hatch' }),
     () => generateSandbags(3, 3),
   ]
   const coverSpots: { x: number; z: number }[] = []
@@ -420,44 +470,59 @@ export function createWorld(ctx: GameContext): WorldSystem {
   }
   put(generateFallenTree(), 20, BOSS_ENTRY.breachZ - 2.5, 0, false)
   put(generateFallenTree(), -22, BOSS_ENTRY.breachZ - 3.5, 2, false)
-  for (let i = 0; i < 40; i++) {
-    const x = rng.range(-120, 120)
-    const z = rng.range(-125, -52)
-    if (Math.abs(x - BOSS_ENTRY.startX) < BOSS_ENTRY.breachHalfWidth + 3) continue
-    if (onSpawnLane(x, 'north') && z > -72) continue
-    const tree = generateTree(rng)
-    tree.group.position.set(x, 0, z)
-    root.add(tree.group)
+
+  // 树木：北侧树林为主，南侧墙外与两栋楼周边零散几棵；避开 Boss 进场通道、刷新点进场路线、校门前的路和建筑
+  const SCHOOL = { x: -100, z: 0, hx: 22, hz: 42 }
+  const GYM = { x: 100, z: 0, hx: 22, hz: 36 }
+  const treeSpots: TreeSpot[] = []
+  const treeFree = (x: number, z: number): boolean => {
+    if (Math.abs(x) < PLAY_BOUNDS.halfX + 8 && Math.abs(z) < PLAY_BOUNDS.halfZ + 9) return false
+    for (const b of [SCHOOL, GYM]) {
+      if (Math.abs(x - b.x) < b.hx + 7 && Math.abs(z - b.z) < b.hz + 5) return false
+    }
+    if (z < 0 && Math.abs(x - BOSS_ENTRY.startX) < BOSS_ENTRY.breachHalfWidth + 3 && z > -90) return false
+    if (z < 0 && onSpawnLane(x, 'north') && z > -72) return false
+    if (z > 0 && onSpawnLane(x, 'south') && z < 72) return false
+    if (z > 0 && Math.abs(x) < 8) return false
+    for (const p of SPAWN_POINTS) if (Math.hypot(x - p.x, z - p.z) < 9) return false
+    for (const s of treeSpots) if (Math.hypot(x - s.x, z - s.z) < TREE_SPACING) return false
+    return true
   }
-  const hillGeometry = new SphereGeometry(1, 16, 10)
-  const hillMaterial = createSurfaceMaterial('foliage', { repeat: [14, 6], color: 0x8fae84, normalScale: 0.6 })
-  ownGeometries.push(hillGeometry)
-  ownMaterials.push(hillMaterial)
-  for (const [hx, hz, sx, sy, sz] of [
-    [-70, -190, 150, 38, 70],
-    [80, -200, 170, 46, 80],
-    [0, -230, 220, 30, 60],
-  ] as const) {
-    const hill = new Mesh(hillGeometry, hillMaterial)
-    hill.scale.set(sx, sy, sz)
-    hill.position.set(hx, -6, hz)
-    root.add(hill)
+  for (let attempt = 0; attempt < TREE_COUNT * 8 && treeSpots.length < TREE_COUNT; attempt++) {
+    // 七成落在北侧树林
+    const north = rng.chance(0.7)
+    const x = rng.range(-135, 135)
+    const z = north ? rng.range(-130, -52) : rng.range(-60, 105)
+    if (treeFree(x, z)) treeSpots.push({ x, z })
   }
+  const forest = createForest(rng, treeSpots, 0.4)
+  root.add(forest.group)
+
+  // 后山：北侧树林背后的缓坡草丘（Boss 从这个方向爬出）
+  const hills = createHills()
+  root.add(hills.mesh)
 
   // 东：体育馆、废弃汽车、公告板
-  put(generateBuilding(44, 14, 72, 0xb8c6d4), 100, 0, 0, false)
-  put(generateCar(0x7a2f2a), PLAY_BOUNDS.halfX + 4, -32, 1, false)
-  put(generateCar(0x2f4a3a), PLAY_BOUNDS.halfX + 5.5, 3, 1, false)
+  put(generateGym(44, 14, 72, 0xb8c6d4), GYM.x, GYM.z, 0, false)
+  put(generateCar(0x7a2f2a, { flat: true }), PLAY_BOUNDS.halfX + 4, -32, 1, false)
+  put(generateCar(0x2f4a3a, { style: 'hatch' }), PLAY_BOUNDS.halfX + 5.5, 3, 1, false)
   put(generateCar(0x8a8a8e), PLAY_BOUNDS.halfX + 4, 31, 1, false)
   put(generateBillboard(), PLAY_BOUNDS.halfX + 3, -8, 1, false)
 
   // 南：校门围墙（已封锁）、课桌椅障碍墙、倾斜的路灯
   const WALL_LEN = 8
   const wallZ = PLAY_BOUNDS.halfZ + 4.5
+  const wallXs: number[] = []
   for (let x = -PLAY_BOUNDS.halfX - 3; x <= PLAY_BOUNDS.halfX + 3; x += WALL_LEN) {
     if (Math.abs(x) < 5 || onSpawnLane(x, 'south')) continue
-    put(generateWall(WALL_LEN, 2.6), x, wallZ, 0, false)
+    wallXs.push(x)
   }
+  wallXs.forEach((x, i) => {
+    // 和下一段相接时，那一段左端的砖柱就是这一段的右端柱
+    const next = wallXs[i + 1]
+    const joined = next !== undefined && Math.abs(next - x - WALL_LEN) < 1e-6
+    put(generateWall(WALL_LEN, 2.6, !joined), x, wallZ, 0, false)
+  })
   put(generateGate(), 0, wallZ, 0, false)
   put(generateDeskPile(5, 3), -11, PLAY_BOUNDS.halfZ + 2.2, 0, false)
   put(generateDeskPile(5, 3), 12, PLAY_BOUNDS.halfZ + 2.4, 0, false)
@@ -465,7 +530,7 @@ export function createWorld(ctx: GameContext): WorldSystem {
   put(generateLampPost(-0.24), 22, PLAY_BOUNDS.halfZ + 2, 2, false)
 
   // 西：教学楼、翻倒的垃圾桶、木板铁丝网路障
-  put(generateBuilding(44, 18, 84, 0xd8d0c0), -100, 0, 0, false)
+  put(generateSchool(44, 18, 84, 0xd8d0c0), SCHOOL.x, SCHOOL.z, 0, false)
   put(generateTrashBin(), -PLAY_BOUNDS.halfX - 2.5, -8, 0, false)
   put(generateTrashBin(), -PLAY_BOUNDS.halfX - 3, 9, 1, false)
   put(generateBarrier(), -PLAY_BOUNDS.halfX - 2, -30, 1, false)
@@ -658,6 +723,15 @@ export function createWorld(ctx: GameContext): WorldSystem {
 
     update(dt) {
       skyTime.value += dt
+      // 阴影框跟随相机（世界系统在玩家之后更新，相机位置已是本帧的）
+      if (viewCamera) {
+        const extent = QUALITY_PROFILES[renderState.quality].shadowExtent
+        viewCamera.getWorldDirection(viewDir)
+        viewDir.y = 0
+        const len = viewDir.length()
+        const lead = len > 1e-4 ? (extent * SHADOW_LEAD) / len : 0
+        placeShadow(viewCamera.position.x + viewDir.x * lead, viewCamera.position.z + viewDir.z * lead, extent)
+      }
       if (!breached) return
       for (const piece of breachPieces) {
         if (piece.time >= BREACH_TIME) continue
@@ -681,6 +755,8 @@ export function createWorld(ctx: GameContext): WorldSystem {
       scene.environment = previousEnvironment
       scene.environmentIntensity = previousEnvIntensity
       envTarget.dispose()
+      forest.dispose()
+      hills.dispose()
       ownGeometries.forEach((g) => g.dispose())
       ownMaterials.forEach((m) => m.dispose())
       disposeProps()

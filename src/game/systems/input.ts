@@ -48,6 +48,9 @@ const WHEEL_PIXELS_PER_NOTCH = 100
 /** 行模式下一格滚轮对应的 deltaY */
 const WHEEL_LINES_PER_NOTCH = 3
 
+/** 用户按 ESC 退出锁定后，浏览器有一段拒绝重锁的冷却期（Chrome 约 1.25 秒），重试要等它过去 */
+const RELOCK_RETRY_DELAY = 1400
+
 /**
  * 创建输入系统。
  * @param ctx 游戏上下文（输入系统最先创建，不依赖其他系统）
@@ -65,6 +68,9 @@ export function createInput(ctx: GameContext, dom: HTMLElement): InputSystem {
   let lookX = 0
   let lookY = 0
   let wheel = 0
+  let disposed = false
+  /** 待执行的自动重锁定时器；没有为 -1 */
+  let relockTimer = -1
 
   const isLocked = (): boolean => document.pointerLockElement === dom
 
@@ -152,6 +158,40 @@ export function createInput(ctx: GameContext, dom: HTMLElement): InputSystem {
     if (isLocked()) document.exitPointerLock()
   }
 
+  const cancelRelock = (): void => {
+    if (relockTimer >= 0) {
+      clearTimeout(relockTimer)
+      relockTimer = -1
+    }
+  }
+
+  const scheduleRelock = (): void => {
+    if (relockTimer >= 0) return
+    relockTimer = window.setTimeout(() => {
+      relockTimer = -1
+      if (disposed || isLocked()) return
+      requestLock()
+    }, RELOCK_RETRY_DELAY)
+  }
+
+  const requestLock = (): void => {
+    cancelRelock()
+    if (isLocked()) return
+    try {
+      // 新版浏览器返回 Promise（用户按 ESC 退出后冷却期内重锁、非手势触发等情况下会 reject），旧版返回 undefined 或直接抛错
+      const result: unknown = dom.requestPointerLock()
+      if (result instanceof Promise) {
+        result.catch(() => {
+          // 被拒绝的最常见原因：用户刚按 ESC（如按 ESC 关闭暂停菜单后立即请求重锁）
+          // 等冷却期过去自动重试一次，指针无缝恢复；若再失败就保持未锁定，等待玩家点击
+          scheduleRelock()
+        })
+      }
+    } catch {
+      scheduleRelock()
+    }
+  }
+
   return {
     get locked(): boolean {
       return isLocked()
@@ -176,20 +216,7 @@ export function createInput(ctx: GameContext, dom: HTMLElement): InputSystem {
       return whole
     },
 
-    requestLock() {
-      if (isLocked()) return
-      try {
-        // 新版浏览器返回 Promise（用户连按 Esc、非手势触发等情况下会 reject），旧版返回 undefined 或直接抛错
-        const result: unknown = dom.requestPointerLock()
-        if (result instanceof Promise) {
-          result.catch(() => {
-            // 浏览器拒绝锁定：保持未锁定状态，由界面层引导玩家再次点击
-          })
-        }
-      } catch {
-        // 同上：忽略同步抛出的拒绝
-      }
-    },
+    requestLock,
 
     exitLock,
     reset,
@@ -204,6 +231,8 @@ export function createInput(ctx: GameContext, dom: HTMLElement): InputSystem {
     },
 
     dispose() {
+      disposed = true
+      cancelRelock()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)

@@ -18,6 +18,7 @@ uniform float uTime;
 uniform vec3 uSunDir;
 uniform vec3 uTop;
 uniform vec3 uHorizon;
+uniform float uDisc;
 varying vec3 vDir;
 
 float hash(vec2 p) {
@@ -48,19 +49,27 @@ float fbm(vec2 p) {
 
 void main() {
   vec3 d = normalize(vDir);
+  vec3 sun = normalize(uSunDir);
   float h = clamp(d.y, 0.0, 1.0);
-  vec3 col = mix(uHorizon, uTop, pow(h, 0.55));
+  float s = max(dot(d, sun), 0.0);
+  // 天顶更深、地平线发白（大气厚度），朝太阳一侧的地平线偏暖
+  vec3 col = mix(uHorizon, uTop, pow(h, 0.5));
+  float horizonGlow = pow(1.0 - h, 5.0);
+  col = mix(col, uHorizon * vec3(1.06, 1.02, 0.94), horizonGlow * pow(s, 2.0) * 0.6);
 
-  // 云层：把视线投到一个水平面上采样噪声，靠近地平线处淡出
+  // 云层：把视线投到一个水平面上采样噪声，靠近地平线处淡出；底部偏灰、朝阳的边缘更亮
   if (d.y > 0.02) {
     vec2 uv = d.xz / (d.y + 0.12) * 1.3 + vec2(uTime * 0.006, uTime * 0.003);
-    float cloud = smoothstep(0.5, 0.82, fbm(uv)) * smoothstep(0.02, 0.25, d.y);
-    col = mix(col, vec3(1.0), cloud * 0.85);
+    float density = fbm(uv);
+    float cloud = smoothstep(0.5, 0.82, density) * smoothstep(0.02, 0.25, d.y);
+    float shade = mix(1.0, 0.82, smoothstep(0.6, 0.95, density));
+    vec3 cloudCol = vec3(0.97, 0.98, 1.0) * shade + vec3(0.25, 0.2, 0.12) * pow(s, 6.0);
+    col = mix(col, cloudCol, cloud * 0.85);
   }
 
-  // 太阳：小而亮的核心 + 大范围光晕
-  float s = max(dot(d, normalize(uSunDir)), 0.0);
-  col += vec3(1.0, 0.93, 0.75) * (pow(s, 350.0) * 1.5 + pow(s, 12.0) * 0.22);
+  // 太阳：日轮（超过 1 的高光交给泛光）+ 米氏散射光晕。烘焙环境贴图时关掉日轮，避免与方向光重复照明
+  float disc = smoothstep(0.99985, 0.99993, s) * uDisc;
+  col += vec3(1.0, 0.95, 0.82) * (disc * 18.0 + pow(s, 350.0) * 1.2 + pow(s, 48.0) * 0.18 + pow(s, 8.0) * 0.12);
 
   // 地平线以下压成雾色
   col = mix(uHorizon * 0.9, col, smoothstep(-0.2, 0.0, d.y));
@@ -73,7 +82,8 @@ void main() {
 
 /**
  * 创建天空穹顶材质。每帧把 uniforms.uTime.value 加上 dt 即可让云缓慢移动。
- * 太阳方向固定在东北方（+X 东，-Z 北），与场景方向光一致。
+ * 太阳方向默认在东北方（+X 东，-Z 北）；世界系统会把 uSunDir 设成与方向光一致。
+ * uDisc 为 0 时不画日轮（烘焙环境贴图用）。
  */
 export function createSkyMaterial(): ShaderMaterial {
   return new ShaderMaterial({
@@ -85,6 +95,7 @@ export function createSkyMaterial(): ShaderMaterial {
       uSunDir: { value: new Vector3(0.6, 0.7, -0.5).normalize() },
       uTop: { value: new Color(0x3f7fd0) },
       uHorizon: { value: new Color(0xcfe3f2) },
+      uDisc: { value: 1 },
     },
     vertexShader: VERTEX,
     fragmentShader: FRAGMENT,

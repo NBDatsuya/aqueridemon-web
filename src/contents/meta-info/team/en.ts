@@ -10,8 +10,8 @@ const en: typeof zhCN = {
   description: 'Empowering 3D Game Jam creators to prototype with speed.',
   members: [
     {
-      name: 'Jammer',
-      role: '3D Dev / Designer',
+      name: 'Saša',
+      role: 'Programming / Designer',
     },
   ],
 }

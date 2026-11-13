@@ -2,8 +2,9 @@
  * 人形骨架与程序化动画：四名角色与三种丧尸共用。
  *
  * 结构：root（外部控制）→ scaler（整体缩放）→ body（骨盆，整体姿态）→ spine（躯干）→ 颈 / 肩 / 肘；body → 髋 / 膝。
- * 头 = 球，躯干 = 长方体，四肢 = 圆柱；全部 geometry 是模块级共享的单位几何体，尺寸靠 Mesh.scale 给出，
- * 材质按实例创建（受击闪烁要逐个改 emissive）。
+ * 头、躯干、四肢、手、鞋都是 humanoid-shapes.ts 里模块级共享的放样几何体，尺寸靠 Mesh.scale 给出；
+ * 人类握拳（右拳心正好包住武器握把），丧尸是张开的爪。材质按实例创建（受击闪烁要逐个改 emissive）。
+ * 所有网格都投射并接收阴影；第一人称下可用 setHumanoidUpperHidden 藏起头和双臂、保留整身阴影。
  *
  * 动画：每帧先算出“站立层”的全部关节角（待机呼吸 + 步态循环），再按阻尼权重叠加
  * 持枪 / 瞄准 / 换弹 / 交互 / 攻击各层，最后按倒地权重混入趴地 / 阵亡姿态。全程只读写预分配的数组。
@@ -13,25 +14,14 @@
  * - 肩的欧拉顺序是 XZY：Y 是绕上臂自身的扭转，Z 是外展（左臂为正、右臂为负时向外），X 是前后摆。
  */
 
-import {
-  BoxGeometry,
-  BufferAttribute,
-  BufferGeometry,
-  Color,
-  CylinderGeometry,
-  Euler,
-  Group,
-  Matrix4,
-  Mesh,
-  MeshStandardMaterial,
-  Quaternion,
-  SphereGeometry,
-  Vector3,
-} from 'three'
-import type { Object3D, Texture } from 'three'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { Euler, Group, Mesh, MeshStandardMaterial, Quaternion, Vector3 } from 'three'
+import type { BufferGeometry, Object3D, Texture } from 'three'
 import type { HumanoidAnimInput, HumanoidRig, WeaponRig } from '../../core/types'
-import { clamp, damp, lerp, smoothstep } from '../../utils/math'
+import { clamp, damp, smoothstep } from '../../utils/math'
+import { FIST_AXIS, humanoidGeometry } from './humanoid-shapes'
+import type { HumanoidShape } from './humanoid-shapes'
+
+export type { HumanoidShape } from './humanoid-shapes'
 
 /* ── 对外类型 ── */
 
@@ -166,15 +156,33 @@ export interface HumanoidParts {
   shinR: Group
 }
 
-/** 配件可用的共享几何体：box 单位立方体（居中）/ sphere 单位球 / limb 顶端在原点、沿 -Y 的单位锥台 */
-export type HumanoidShape = 'box' | 'sphere' | 'limb'
-
 /** createHumanoid 的返回值：在 HumanoidRig 之上暴露挂点，供 character.ts / zombie.ts 加配件 */
 export interface HumanoidBuild extends HumanoidRig {
   readonly parts: HumanoidParts
   readonly dims: HumanoidDims
-  /** 用共享几何体加一个配件。材质按实例创建并参与闪烁 / 释放；位置与缩放由调用方设置 */
+  /**
+   * 用共享几何体（形状与单位见 HumanoidShape）加一个配件。材质按实例创建并参与闪烁 / 释放；
+   * 默认投射并接收阴影，细小贴片可由调用方关掉 castShadow；位置与缩放由调用方设置
+   */
   addMesh(parent: Object3D, shape: HumanoidShape, look: HumanoidLook): Mesh<BufferGeometry, MeshStandardMaterial>
+}
+
+/** 每个 rig 的“上半身隐藏”开关，按 root 登记 */
+const upperHiders = new WeakMap<Object3D, (hidden: boolean) => void>()
+
+/**
+ * 第一人称用：隐藏头（含颈与头上的配件）和双臂（含手里已装上的武器），躯干、骨盆与双腿照常显示，
+ * 低头能看到胸腹、腰带与脚；双臂由第一人称视图模型代替。隐藏部分仍然投射阴影。做法是在主画面与环境光遮蔽这类相机通道里把这些网格压扁成一点
+ * （onBeforeRender 改写本帧的 matrixWorld，下一次渲染开始时 three 会按局部变换重新算出），
+ * 阴影通道不调用 onBeforeRender，因此不受影响。之后才装上的武器不在此列。
+ * @param rig createHumanoid / createCharacter 创建的 rig；其他对象返回 false
+ * @returns 是否生效
+ */
+export function setHumanoidUpperHidden(rig: HumanoidRig, hidden: boolean): boolean {
+  const apply = upperHiders.get(rig.root)
+  if (apply === undefined) return false
+  apply(hidden)
+  return true
 }
 
 /* ── 常量 ── */
@@ -235,27 +243,15 @@ const AIM_TWIST = -0.45
 
 const REST_INPUT: HumanoidAnimInput = { speed: 0, pose: 'stand', action: 'none', actionProgress: 0 }
 
-/* ── 共享几何体与临时对象 ── */
+/** 手相对前臂半径的缩放 */
+const HAND_SCALE = 0.95
 
-interface SharedGeometry {
-  box: BoxGeometry
-  sphere: SphereGeometry
-  limb: CylinderGeometry
-  foot: BoxGeometry
-}
+/* ── 临时对象 ── */
 
-let shared: SharedGeometry | null = null
-
-/** 所有 rig 共用的单位几何体，第一次用到时创建，之后不释放 */
-function sharedGeometry(): SharedGeometry {
-  if (shared === null) {
-    const limb = new CylinderGeometry(1, 0.82, 1, 10, 1)
-    limb.translate(0, -0.5, 0)
-    const foot = new BoxGeometry(1, 1, 1)
-    foot.translate(0, -0.5, 0.22)
-    shared = { box: new BoxGeometry(1, 1, 1), sphere: new SphereGeometry(1, 14, 10), limb, foot }
-  }
-  return shared
+/** 把一个网格在本帧的相机通道里压扁成一点（阴影通道不调用 onBeforeRender） */
+function collapseMatrix(mesh: Object3D): void {
+  const e = mesh.matrixWorld.elements
+  for (let i = 0; i < 11; i++) if (i !== 3 && i !== 7) e[i] = 0
 }
 
 /**
@@ -282,8 +278,6 @@ const lieTarget = new Float32Array(DOF)
  * @returns 实现 HumanoidRig 的对象，并额外暴露 parts / dims / addMesh 供调用方加配件
  */
 export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
-  const geo = sharedGeometry()
-
   /* 尺寸 */
   const scale = options.scale ?? 1
   const wantHeight = options.height ?? 1.8
@@ -367,18 +361,22 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
   /** 各材质的自发光底色（r, g, b 连续存放） */
   const baseEmissive: number[] = []
   const lookMats = new Map<HumanoidLook, MeshStandardMaterial>()
+  /** 带顶点色的变体（鞋 / 脚：几何体里压暗了鞋底） */
+  const lookMatsVc = new Map<HumanoidLook, MeshStandardMaterial>()
 
-  const materialOf = (look: HumanoidLook): MeshStandardMaterial => {
-    let mat = lookMats.get(look)
+  const materialOf = (look: HumanoidLook, vertexColors = false): MeshStandardMaterial => {
+    const cache = vertexColors ? lookMatsVc : lookMats
+    let mat = cache.get(look)
     if (mat === undefined) {
       mat = new MeshStandardMaterial({
         color: look.color,
         map: look.map ?? null,
         roughness: look.roughness ?? 0.85,
         metalness: 0,
+        vertexColors,
       })
       if (look.emissive !== undefined) mat.emissive.setHex(look.emissive)
-      lookMats.set(look, mat)
+      cache.set(look, mat)
       mats.push(mat)
       baseEmissive.push(mat.emissive.r, mat.emissive.g, mat.emissive.b)
     }
@@ -390,7 +388,10 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
     shape: HumanoidShape,
     look: HumanoidLook,
   ): Mesh<BufferGeometry, MeshStandardMaterial> => {
-    const mesh = new Mesh<BufferGeometry, MeshStandardMaterial>(geo[shape], materialOf(look))
+    const vc = shape === 'shoe' || shape === 'bareFoot'
+    const mesh = new Mesh<BufferGeometry, MeshStandardMaterial>(humanoidGeometry(shape), materialOf(look, vc))
+    mesh.castShadow = true
+    mesh.receiveShadow = true
     parent.add(mesh)
     return mesh
   }
@@ -417,26 +418,40 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
   const shinLook = options.shin ?? options.legs
   const shoeLook = options.shoe ?? shinLook
 
-  // 躯干略向下多出一截，盖住大腿根
-  const torsoMesh = addMesh(spine, 'box', options.top)
+  spine.name = 'humanoid-torso'
+
+  // 躯干略向下多出一截，盖住大腿根；骨盆块（裤腰）在第一人称隐藏上半身后接住大腿根
+  const torsoMesh = addMesh(spine, 'torso', options.top)
   torsoMesh.scale.set(torsoW, torsoH + 0.04, torsoD)
-  torsoMesh.position.set(0, torsoH / 2 - 0.02, 0)
+  torsoMesh.position.set(0, -0.02, 0)
+  const pelvisMesh = addMesh(body, 'torso', options.legs)
+  pelvisMesh.scale.set(torsoW * 0.92, 0.2, torsoD * 0.96)
+  pelvisMesh.position.set(0, -0.13, 0)
 
   const neckMesh = addMesh(neckPivot, 'limb', skin)
   neckMesh.scale.set(headR * 0.42, neck + 0.06, headR * 0.42)
   neckMesh.position.set(0, neck + 0.03, 0)
 
-  const headMesh = addMesh(head, 'sphere', skin)
+  const headMesh = addMesh(head, 'head', skin)
   headMesh.scale.setScalar(headR)
 
-  /** 手心相对肘关节的位置（沿前臂） */
-  const handY = -foreLen - armR * 0.35
+  /** 手的缩放（单位为前臂半径）；人类握拳，丧尸是爪 */
+  const handS = armR * HAND_SCALE
+  /**
+   * 手腕相对肘关节的位置。人类的拳头向袖口里缩进半个前臂半径：拳心（武器握把）因此落在
+   * 旧版球形手的位置附近，持枪 / 瞄准的预设手臂姿态不需要重新求解
+   */
+  const wristY = zombie ? -foreLen : -foreLen + armR * 0.5
 
   const buildArm = (side: 1 | -1): { shoulder: Group; elbow: Group } => {
     const shoulder = new Group()
     shoulder.position.set(side * shoulderX, shoulderY, 0)
     shoulder.rotation.order = 'XZY'
     spine.add(shoulder)
+    // 肩头：圆球盖住上臂顶端与躯干肩线之间的台阶
+    const cap = addMesh(shoulder, 'sphere', upperArmLook)
+    cap.scale.set(armR * 1.08, armR * 1.12, armR * 1.12)
+    cap.position.set(-side * armR * 0.12, armR * 0.05, 0)
     const upper = addMesh(shoulder, 'limb', upperArmLook)
     upper.scale.set(armR, upperLen, armR)
     const elbow = new Group()
@@ -444,9 +459,10 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
     shoulder.add(elbow)
     const fore = addMesh(elbow, 'limb', forearmLook)
     fore.scale.set(armR * 0.86, foreLen, armR * 0.86)
-    const hand = addMesh(elbow, 'sphere', skin)
-    hand.scale.set(armR * 0.9, armR * 1.05, armR * 0.9)
-    hand.position.set(0, handY, 0)
+    const handShape: HumanoidShape = zombie ? (side > 0 ? 'clawL' : 'clawR') : side > 0 ? 'fistL' : 'fistR'
+    const hand = addMesh(elbow, handShape, skin)
+    hand.scale.setScalar(handS)
+    hand.position.set(0, wristY, 0)
     return { shoulder, elbow }
   }
 
@@ -461,11 +477,10 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
     hip.add(knee)
     const shin = addMesh(knee, 'limb', shinLook)
     shin.scale.set(legR * 0.84, shinLen - FOOT_HEIGHT * 0.5, legR * 0.84)
-    // 脚：原点在脚踝，向前伸出
-    const foot = new Mesh<BufferGeometry, MeshStandardMaterial>(geo.foot, materialOf(shoeLook))
+    // 脚：原点在脚踝，向前伸出；鞋与皮肤相同时是赤脚
+    const foot = addMesh(knee, shoeLook === skin ? 'bareFoot' : 'shoe', shoeLook)
     foot.scale.set(legR * 1.5, FOOT_HEIGHT, footLen)
     foot.position.set(0, -(shinLen - FOOT_HEIGHT), 0)
-    knee.add(foot)
     return { hip, knee, foot }
   }
 
@@ -484,10 +499,28 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
   const kneeR = legR2.knee
   const footR = legR2.foot
 
-  /** 右手锚点：武器的握把原点挂在这里，朝向每帧由 syncAnchor 给出 */
+  /** 右手锚点：在右拳的拳心空洞里，武器的握把原点挂在这里，朝向每帧由 syncAnchor 给出 */
   const anchor = new Group()
-  anchor.position.set(0, handY, 0)
+  anchor.position.set(-FIST_AXIS.x * handS, wristY + FIST_AXIS.y * handS, 0)
   elbowR.add(anchor)
+
+  /* 第一人称：头（含颈、头发、五官）与双臂只留阴影，躯干照常显示 */
+  let upperHidden = false
+  const hookedUpper = new WeakSet<Object3D>()
+  upperHiders.set(root, (hidden: boolean): void => {
+    upperHidden = hidden
+    if (!hidden) return
+    for (const branch of [neckPivot, shoulderL, shoulderR]) {
+      branch.traverse((node) => {
+        if (!(node instanceof Mesh) || hookedUpper.has(node)) return
+        hookedUpper.add(node)
+        const mesh: Object3D = node
+        mesh.onBeforeRender = (): void => {
+          if (upperHidden) collapseMatrix(mesh)
+        }
+      })
+    }
+  })
 
   const parts: HumanoidParts = {
     body,
@@ -989,6 +1022,8 @@ export function createHumanoid(options: HumanoidOptions): HumanoidBuild {
     mats.length = 0
     baseEmissive.length = 0
     lookMats.clear()
+    lookMatsVc.clear()
+    upperHiders.delete(root)
   }
 
   reset()

@@ -21,7 +21,7 @@ export type TeammateId = Exclude<CharacterId, 'samuel'>
 export type EnemyType = 'common' | 'runner' | 'tank'
 /** alive 可行动；downed 倒地待救；dead 阵亡；boarded 已登机（锁定） */
 export type ActorStatus = 'alive' | 'downed' | 'dead' | 'boarded'
-export type GamePhase = 'select' | 'prep' | 'wave' | 'boss' | 'evac' | 'ending'
+export type GamePhase = 'prep' | 'wave' | 'boss' | 'evac' | 'ending'
 export type EndingKind = 'HE' | 'NE_CASUALTY' | 'NE_NO_SAMPLE' | 'BE'
 export type DamageSource =
   | 'common'
@@ -46,12 +46,12 @@ export interface WeaponDef {
   name: string
   /** 类型文案 */
   kind: string
-  /** 特点文案（选枪界面） */
+  /** 特点文案（设计说明，暂无界面使用） */
   trait: string
   damage: number
   rpm: number
   magSize: number
-  /** 备弹上限 */
+  /** 备弹上限（6 个弹匣） */
   reserveMax: number
   reloadTime: number
   /** 伤害开始衰减的距离 */
@@ -107,6 +107,13 @@ export interface TeammateAiDef {
   followRight: number
   followForward: number
   moveSpeed: number
+  /** 自主站位：离主控的距离带（米） */
+  postMin: number
+  postMax: number
+  /** 自主站位相对主控朝向的偏好方位（弧度）：0 正前方，正值偏右，π 正后方 */
+  postBearing: number
+  /** 交战时离主控的最远距离（米），超出后回到自己的站位 */
+  leash: number
 }
 
 export interface EnemyDef {
@@ -359,8 +366,15 @@ export interface HelicopterAnimInput {
 export interface HelicopterRig {
   /** 原点在起落架底部中心，机头朝 +Z */
   readonly root: Group
-  /** 舱内座位锚点（主控登机后的相机位置） */
+  /** 主控相机锚点：主控座位（seats[playerSeat]）上方的坐姿眼高，本地 +Z 朝向舱门 */
   readonly seat: Object3D
+  /**
+   * 舱内全部座位的坐姿锚点：原点是骨盆落座的位置（坐垫顶面），本地 +Z 朝向舱门、+Y 向上。
+   * 人形模型（原点在脚底、正面朝 +Z）挂在这里再摆成坐姿即可
+   */
+  readonly seats: readonly Object3D[]
+  /** 主控座位在 seats 里的下标 */
+  readonly playerSeat: number
   /** 舱门外的登机点（角色跑向这里） */
   readonly doorPoint: Object3D
   update(dt: number, anim: HelicopterAnimInput): void
@@ -382,6 +396,12 @@ export interface AirdropRig {
   dispose(): void
 }
 
+/** 箱类模型选项 */
+export interface CrateModelOptions {
+  /** 是否带降落伞（空投变体）；摆在地上的箱子不传，默认 false */
+  parachute?: boolean
+}
+
 /** 角色 / 敌人 / 载具等模型工厂（generators/geometry/index.ts 导出 actorModels） */
 export interface ActorModels {
   createCharacter(id: CharacterId): HumanoidRig
@@ -391,6 +411,10 @@ export interface ActorModels {
   createBoss(): BossRig
   createHelicopter(): HelicopterRig
   createAirdrop(): AirdropRig
+  /** 主武器箱：与空投补给箱是不同的模型；parachute 为 true 时带伞 */
+  createWeaponCrate(options?: CrateModelOptions): AirdropRig
+  /** 医疗包箱：白箱蓝十字；parachute 为 true 时带伞 */
+  createMedkitCrate(options?: CrateModelOptions): AirdropRig
 }
 
 /** 程序纹理入口（generators/textures/index.ts 导出 getTexture）。同 kind + seed 只生成一次 */
@@ -420,12 +444,17 @@ export type SfxId =
   | 'zombie_groan'
   | 'zombie_attack'
   | 'zombie_die'
+  | 'zombie_alert'
+  | 'zombie_hurt'
+  | 'zombie_step'
   | 'runner_screech'
   | 'runner_attack'
+  | 'runner_hurt'
   | 'tank_roar'
   | 'tank_step'
   | 'tank_slam'
   | 'tank_die'
+  | 'tank_hurt'
   | 'boss_roar'
   | 'boss_sweep'
   | 'boss_stab'
@@ -615,9 +644,9 @@ export interface PlayerSystem extends System {
   readonly aimingEnemy: boolean
   /** 当前可用的交互；没有则为 null */
   readonly interaction: InteractionInfo | null
-  /** 开局选枪：清空武器并发放满弹的指定武器 */
-  equipInitial(weapon: WeaponId): void
-  /** 开关玩家操作（选枪界面、结局时关闭）。关闭时仍继续更新相机 */
+  /** 登机就座过渡中相机相对座位眼位的偏移（世界坐标）；过渡结束或未登机时为零向量 */
+  readonly seatOffset: Vector3
+  /** 开关玩家操作（结局时关闭）。关闭时仍继续更新相机 */
   setControl(enabled: boolean): void
 }
 
@@ -652,6 +681,14 @@ export interface EnemySystem extends System {
   clearAll(): void
 }
 
+/** Boss 毒池的只读视图 */
+export interface BossPoisonPool {
+  /** 0 空闲；1 已喷出、落点在预警；2 已落地 */
+  readonly status: number
+  /** 落点中心 */
+  readonly center: Vector3
+}
+
 export interface BossSystem extends System {
   /** 是否已登场（死亡后尸体仍在，保持 true） */
   readonly active: boolean
@@ -673,6 +710,8 @@ export interface BossSystem extends System {
   applyDamage(amount: number, zone: BossZone, info: DamageInfo): number
   /** AI 队友的瞄准点（弱点暴露时为弱点） */
   aimPoint(out: Vector3): Vector3
+  /** 毒池槽位（含空闲槽，按 status 区分），供 AI 队友提前躲避；半径见 BOSS.spit.poolRadius */
+  readonly poisonPools: readonly BossPoisonPool[]
   /** Boss 死后样本提取点是否可用 */
   readonly sampleAvailable: boolean
   readonly samplePoint: Vector3
@@ -682,26 +721,33 @@ export interface BossSystem extends System {
 
 export type AirdropContent = { kind: 'weapon'; weapon: WeaponId } | { kind: 'ammo' } | { kind: 'medkit' }
 
+/** 空投来源：wave = 波次空投（子弹 + 主武器）；boss = Boss 战补给（子弹 + 医疗包） */
+export type AirdropSource = 'wave' | 'boss'
+
 export interface AirdropCrate {
   readonly id: number
   /** 箱底中心世界坐标（下落过程中 y > 0） */
   readonly position: Vector3
   readonly landed: boolean
   readonly content: AirdropContent
+  /** 开局摆在地上的主武器箱：计入每人限开次数；空投下来的箱子为 false */
+  readonly limited: boolean
 }
 
 export interface AirdropSystem extends System {
-  /** 尚未被拾取的空投箱（含下落中的） */
+  /** 尚未被拾取的空投箱（含下落中的与开局摆在地上的主武器箱） */
   readonly crates: readonly AirdropCrate[]
-  /** 投下 count 个空投，落点从 AIRDROP_POINTS 随机选取且不重复 */
-  drop(count: number): void
-  /** pos 周围 maxDist 内最近的已落地空投 */
-  nearestLanded(pos: Vector3, maxDist: number): AirdropCrate | null
+  /** 开局在出生点周围摆好主武器箱：箱内主武器随机，每人限开 WEAPON_CRATES.perPerson 个 */
+  deployWeaponCrates(): void
+  /** 投下 count 个空投，落点从 AIRDROP_POINTS 随机选取且不重复；内容按来源混配 */
+  drop(count: number, source?: AirdropSource): void
+  /** who 是否已经开满开局主武器箱（每人只有 WEAPON_CRATES.perPerson 次机会） */
+  hasOpenedWeaponCrate(who: Combatant): boolean
   /**
    * 拾取空投并应用内容。主控已有 2 把且箱内是新型号时返回 'needsChoice' 并发出 weaponChoice，箱子保留；
-   * AI 队友遇到同样情况直接替换当前武器。
+   * AI 队友遇到同样情况直接替换当前武器。开局主武器箱超出每人的开箱次数时返回 'blocked'，箱子保留给别人。
    */
-  pickup(crate: AirdropCrate, who: Combatant): 'picked' | 'needsChoice'
+  pickup(crate: AirdropCrate, who: Combatant): 'picked' | 'needsChoice' | 'blocked'
   /** 主控在替换界面选定后由引擎调用；slot 为 null 表示放弃（箱子保留） */
   resolveChoice(crate: AirdropCrate, who: Combatant, slot: number | null): void
 }
@@ -714,13 +760,23 @@ export interface EvacSystem extends System {
   begin(): void
   /** Boss 死亡时由引擎调用：加速降落，EVAC.landAfterBossDeath 秒后落地并开始倒计时 */
   bossDefeated(): void
-  /** who 当前能否登机（已降落、存活、在停机坪半径内） */
+  /** who 当前能否登机（已降落、存活、在舱门登机范围 INTERACT.boardRange 内、且还有空座位） */
   canBoard(who: Combatant): boolean
-  /** 登机：置为 boarded 并发出 boarded */
+  /** 登机：分配座位（主控固定坐 playerSeat，队友按登机先后坐其余空位），置为 boarded 并发出 boarded */
   board(who: Combatant): void
   /** 直升机是否已起飞离场（此时进入结局判定） */
   readonly departed: boolean
-  /** 舱内座位的世界坐标（主控登机后的相机位置） */
+  /** 座位总数 */
+  readonly seatCount: number
+  /** 各座位上的乘员，下标与座位编号一致；空座位为 null */
+  readonly occupants: readonly (Combatant | null)[]
+  /** who 的座位编号；未登机为 -1 */
+  seatOf(who: Combatant): number
+  /** 座位的坐姿锚点（原点在骨盆落座处，本地 +Z 朝向舱门），随机身移动；编号越界为 null */
+  seatAnchor(index: number): Object3D | null
+  /** 主控相机锚点在机舱里的朝向角（atan2(dir.x, dir.z)，正对舱门）；登机后的环顾范围以它为中心 */
+  seatYaw(): number
+  /** 主控座位上的眼睛世界坐标（主控登机后的相机位置） */
   seatWorld(out: Vector3): Vector3
   /** 舱门外登机点的世界坐标（AI 跑向这里） */
   doorWorld(out: Vector3): Vector3

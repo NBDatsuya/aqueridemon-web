@@ -43,8 +43,18 @@ export const TAIL_ROTOR = { x: -0.3, y: 1.7, z: -8.63, radius: 0.95 } as const
 /** 滑橇：左右间距的一半、管径、管心高度（管底再往下 8mm 是耐磨板，板底正好在 root 的 y = 0） */
 export const SKID = { x: 1.3, radius: 0.055, y: 0.063 - HULL_Y } as const
 
-/** 座位锚点（root 本地坐标）：-X 侧座椅上方的坐姿眼高，正对舱门中线 */
-export const SEAT = { x: -0.7, y: 2.05, z: CABIN_Z } as const
+/** -X 侧面向舱门的联排帆布座椅（机体系）：座位数、座位间距、骨架纵向起止、第一个座位中心 */
+export const TROOP_SEATS = { count: 4, pitch: 0.5, z0: -0.82, z1: 1.22, first: -0.55 } as const
+/** 第 index 个座位中心的 z（机体系与 root 本地相同） */
+export function troopSeatZ(index: number): number {
+  return TROOP_SEATS.first + index * TROOP_SEATS.pitch
+}
+/** 主控的座位编号：靠前的第三个座位，坐下后正对舱门洞口 */
+export const PLAYER_SEAT = 2
+/** 座位的坐姿锚点（root 本地坐标）：坐垫顶面上、靠背前约一个躯干厚度处，即骨盆落座的位置 */
+export const SEAT_PAN = { x: -0.9, y: HULL_Y + FLOOR_Y + 0.465 } as const
+/** 主控相机锚点（root 本地坐标）：主控座位上方的坐姿眼高 */
+export const SEAT = { x: -0.7, y: 2.05, z: troopSeatZ(PLAYER_SEAT) } as const
 /** 登机点（root 本地坐标）：舱门外的地面上 */
 export const DOOR_POINT = { x: 2.5, y: 0, z: CABIN_Z } as const
 

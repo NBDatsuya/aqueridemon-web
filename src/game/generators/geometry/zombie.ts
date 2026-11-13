@@ -5,9 +5,12 @@
  * - runner：瘦削、身体前倾、四肢修长，赤臂赤脚，攻击为前扑。
  * - tank：肌肉膨胀、粗臂、约 2.5m 高，上身赤裸只剩腰间与肩带的校服残片，攻击为双拳砸地。
  *
+ * 共同细节：手是张开弯曲的爪；衣摆与断袖、断裤腿处垂着布条；部分个体胸侧撕开、露出血肉与肋骨；嘴里露出一排牙。
+ *
  * 整体缩放取 ENEMIES[type].scale，未缩放身高取 height / scale，所以 rig.height 恰好等于 ENEMIES[type].height。
  */
 
+import { Group } from 'three'
 import { ENEMIES } from '../../core/config'
 import type { EnemyType, HumanoidRig } from '../../core/types'
 import { createRng } from '../../utils/random'
@@ -27,6 +30,8 @@ const SKIN_TINTS: readonly number[] = [0xffffff, 0xdfe6d2, 0xcfd6c4, 0xe8dfd0, 0
 const HAIR_COLORS: readonly number[] = [0x1c1a18, 0x2a241f, 0x3a3630]
 const SHOE_COLOR = 0x1f1f22
 const BLOOD_COLOR = 0x4a0f0c
+/** 露出的骨头与牙齿 */
+const BONE_COLOR = 0xc9bc98
 
 /** 眼睛：底色与自发光（暗处也能看清朝向） */
 const EYES: Record<EnemyType, { color: number; emissive: number }> = {
@@ -35,41 +40,105 @@ const EYES: Record<EnemyType, { color: number; emissive: number }> = {
   tank: { color: 0xe0c890, emissive: 0x7a4a12 },
 }
 
-/** 发光的眼睛与污黑的嘴 */
-function addFace(rig: HumanoidBuild, eyes: HumanoidLook, mouth: HumanoidLook): void {
+/** 发光的眼睛、污黑张开的嘴与一排露出的牙 */
+function addFace(rig: HumanoidBuild, eyes: HumanoidLook, mouth: HumanoidLook, bone: HumanoidLook): void {
   const r = rig.dims.headRadius
   const head = rig.parts.head
-  const left = rig.addMesh(head, 'box', eyes)
-  left.scale.set(r * 0.22, r * 0.14, r * 0.1)
-  left.position.set(r * 0.36, r * 0.14, r * 0.9)
-  const right = rig.addMesh(head, 'box', eyes)
-  right.scale.copy(left.scale)
-  right.position.set(-r * 0.36, r * 0.14, r * 0.9)
+  const eyeMesh = rig.addMesh(head, 'eyes', eyes)
+  eyeMesh.scale.set(r * 1.08, r * 1.15, r)
+  eyeMesh.castShadow = false
   const jaw = rig.addMesh(head, 'box', mouth)
-  jaw.scale.set(r * 0.5, r * 0.18, r * 0.1)
-  jaw.position.set(0, -r * 0.42, r * 0.88)
+  jaw.scale.set(r * 0.5, r * 0.22, r * 0.14)
+  jaw.position.set(0, -r * 0.44, r * 0.84)
+  jaw.castShadow = false
+  const teeth = rig.addMesh(head, 'box', bone)
+  teeth.scale.set(r * 0.4, r * 0.06, r * 0.08)
+  teeth.position.set(0, -r * 0.36, r * 0.9)
+  teeth.castShadow = false
+}
+
+/**
+ * 破衣服：衣摆一圈下垂的布条；袖子 / 裤腿只剩上半截时，在断口处也垂下布条。
+ * @param top 上衣外观（为皮肤时表示赤膊，不加衣摆）
+ */
+function addRags(
+  rig: HumanoidBuild,
+  rng: Rng,
+  skin: HumanoidLook,
+  top: HumanoidLook,
+  upperArm: HumanoidLook,
+  forearm: HumanoidLook,
+  legs: HumanoidLook,
+  shin: HumanoidLook,
+): void {
+  const d = rig.dims
+  const p = rig.parts
+  if (top !== skin) {
+    const hem = rig.addMesh(p.torso, 'rags', top)
+    hem.scale.set(d.torsoWidth * 0.93, rng.range(0.1, 0.16), d.torsoDepth * 0.96)
+    hem.position.set(0, 0.03, 0)
+    // 布条的长短是固定图案：随机左右镜像一下，避免每只丧尸的衣摆完全一样
+    if (rng.chance(0.5)) hem.scale.x = -hem.scale.x
+  }
+  if (upperArm !== skin && forearm === skin) {
+    for (const arm of [p.upperArmL, p.upperArmR]) {
+      const cuff = rig.addMesh(arm, 'rags', upperArm)
+      cuff.scale.set(d.armRadius * 2.1, rng.range(0.05, 0.09), d.armRadius * 2.1)
+      cuff.position.set(0, -d.upperArm * 0.9, 0)
+      cuff.rotation.y = rng.range(0, Math.PI * 2)
+      cuff.castShadow = false
+    }
+  }
+  if (legs !== skin && shin === skin) {
+    for (const thigh of [p.thighL, p.thighR]) {
+      const cuff = rig.addMesh(thigh, 'rags', legs)
+      cuff.scale.set(d.legRadius * 2.1, rng.range(0.07, 0.12), d.legRadius * 2.1)
+      cuff.position.set(0, -d.thigh * 0.92, 0)
+      cuff.rotation.y = rng.range(0, Math.PI * 2)
+      cuff.castShadow = false
+    }
+  }
+}
+
+/** 胸侧撕开的伤口：一块暗红的血肉与露出的四根肋骨，偏向随机一侧 */
+function addRibWound(rig: HumanoidBuild, rng: Rng, flesh: HumanoidLook, bone: HumanoidLook): void {
+  const d = rig.dims
+  const turn = rng.sign() * rng.range(0.25, 0.6)
+  const pivot = new Group()
+  pivot.rotation.y = turn
+  rig.parts.torso.add(pivot)
+  const wound = rig.addMesh(pivot, 'sphere', flesh)
+  wound.scale.set(d.torsoWidth * 0.2, d.torsoHeight * 0.2, d.torsoDepth * 0.1)
+  wound.position.set(0, d.torsoHeight * 0.62, d.torsoDepth * 0.415)
+  wound.castShadow = false
+  const ribs = rig.addMesh(pivot, 'ribs', bone)
+  ribs.scale.set(d.torsoWidth * 0.62, d.torsoHeight * 0.17, d.torsoDepth * 1.04)
+  ribs.position.set(0, d.torsoHeight * 0.72, 0)
+  ribs.castShadow = false
 }
 
 /** 胸腹上的一块血污，位置与大小随 seed 变化 */
 function addStain(rig: HumanoidBuild, rng: Rng, look: HumanoidLook): void {
   const d = rig.dims
-  const stain = rig.addMesh(rig.parts.torso, 'box', look)
+  // 压扁的球贴在弧形的胸腹上，比平板更贴合躯干表面
+  const stain = rig.addMesh(rig.parts.torso, 'sphere', look)
   const w = d.torsoWidth * rng.range(0.25, 0.5)
   const h = d.torsoHeight * rng.range(0.2, 0.42)
-  stain.scale.set(w, h, 0.012)
+  stain.scale.set(w / 2, h / 2, d.torsoDepth * 0.07)
   stain.position.set(
-    rng.range(-0.5, 0.5) * (d.torsoWidth - w),
+    rng.range(-0.35, 0.35) * (d.torsoWidth - w),
     d.torsoHeight * rng.range(0.3, 0.75),
-    d.torsoDepth / 2 + 0.004,
+    d.torsoDepth * 0.445,
   )
+  stain.castShadow = false
 }
 
 /** 稀疏的头发：比头略大、向后上方偏移的球 */
 function addHair(rig: HumanoidBuild, look: HumanoidLook): void {
   const r = rig.dims.headRadius
   const cap = rig.addMesh(rig.parts.head, 'sphere', look)
-  cap.scale.setScalar(r * 1.05)
-  cap.position.set(0, r * 0.16, -r * 0.2)
+  cap.scale.set(r * 0.98, r * 1.05, r * 1.05)
+  cap.position.set(0, r * 0.18, -r * 0.2)
 }
 
 /** 坦克的肌肉与校服残片：三角肌、隆起的胸背、腰间布片、斜挎的肩带 */
@@ -82,13 +151,18 @@ function addTankBulk(rig: HumanoidBuild, skin: HumanoidLook, rag: HumanoidLook):
   deltoidR.scale.copy(deltoidL.scale)
   deltoidR.position.set(-d.armRadius * 0.15, -d.armRadius * 0.2, 0)
 
-  const chest = rig.addMesh(rig.parts.torso, 'box', skin)
-  chest.scale.set(d.torsoWidth * 0.92, d.torsoHeight * 0.4, d.torsoDepth * 1.16)
+  // 隆起的胸肌与背阔：扁球鼓出躯干表面
+  const chest = rig.addMesh(rig.parts.torso, 'sphere', skin)
+  chest.scale.set(d.torsoWidth * 0.5, d.torsoHeight * 0.24, d.torsoDepth * 0.6)
   chest.position.set(0, d.torsoHeight * 0.72, 0.01)
 
-  const waist = rig.addMesh(rig.parts.torso, 'box', rag)
-  waist.scale.set(d.torsoWidth * 1.03, d.torsoHeight * 0.26, d.torsoDepth * 1.04)
-  waist.position.set(0, d.torsoHeight * 0.1, 0)
+  // 腰间残留的校服：一圈短筒加下垂的布条
+  const waist = rig.addMesh(rig.parts.torso, 'band', rag)
+  waist.scale.set(d.torsoWidth * 0.52, d.torsoHeight * 0.26, d.torsoDepth * 0.54)
+  waist.position.set(0, d.torsoHeight * 0.23, 0)
+  const hem = rig.addMesh(rig.parts.torso, 'rags', rag)
+  hem.scale.set(d.torsoWidth * 1.03, d.torsoHeight * 0.22, d.torsoDepth * 1.07)
+  hem.position.set(0, -0.03, 0)
 
   const strap = rig.addMesh(rig.parts.torso, 'box', rag)
   strap.scale.set(d.torsoWidth * 0.2, d.torsoHeight * 1.05, d.torsoDepth * 1.2)
@@ -108,11 +182,13 @@ export function createZombie(type: EnemyType, seed: number): HumanoidRig {
   const skinTex = getTexture('skin')
   const cloth = getTexture('cloth')
 
-  const skin: HumanoidLook = { color: rng.pick(SKIN_TINTS), map: skinTex, roughness: 0.95 }
-  const top: HumanoidLook = { color: rng.pick(UNIFORM_COLORS), map: cloth, roughness: 1 }
-  const legs: HumanoidLook = { color: rng.pick(PANTS_COLORS), map: cloth, roughness: 1 }
-  const shoe: HumanoidLook = { color: SHOE_COLOR, roughness: 0.9 }
-  const blood: HumanoidLook = { color: BLOOD_COLOR, roughness: 0.6 }
+  // 腐烂的皮肤略带湿润的反光；血污更湿更亮
+  const skin: HumanoidLook = { color: rng.pick(SKIN_TINTS), map: skinTex, roughness: 0.78 }
+  const top: HumanoidLook = { color: rng.pick(UNIFORM_COLORS), map: cloth, roughness: 0.97 }
+  const legs: HumanoidLook = { color: rng.pick(PANTS_COLORS), map: cloth, roughness: 0.97 }
+  const shoe: HumanoidLook = { color: SHOE_COLOR, roughness: 0.85 }
+  const blood: HumanoidLook = { color: BLOOD_COLOR, roughness: 0.38 }
+  const bone: HumanoidLook = { color: BONE_COLOR, roughness: 0.62 }
   const eyes: HumanoidLook = { color: EYES[type].color, emissive: EYES[type].emissive, roughness: 0.4 }
 
   // 歪斜：躯干与头合计侧歪不超过 ±15°，另加少量扭转与转头
@@ -220,12 +296,17 @@ export function createZombie(type: EnemyType, seed: number): HumanoidRig {
 
   const rig = createHumanoid(options)
 
-  addFace(rig, eyes, blood)
+  addFace(rig, eyes, blood, bone)
   addStain(rig, rng, blood)
+  const upperArm = options.upperArm ?? options.top
+  const forearm = options.forearm ?? upperArm
+  const shin = options.shin ?? options.legs
+  addRags(rig, rng, skin, options.top, upperArm, forearm, options.legs, shin)
   if (type === 'tank') {
-    addTankBulk(rig, skin, { color: rng.pick(UNIFORM_COLORS), map: cloth, roughness: 1 })
-  } else if (type === 'common' && rng.chance(0.6)) {
-    addHair(rig, { color: rng.pick(HAIR_COLORS), roughness: 1 })
+    addTankBulk(rig, skin, { color: rng.pick(UNIFORM_COLORS), map: cloth, roughness: 0.97 })
+  } else {
+    if (type === 'common' && rng.chance(0.6)) addHair(rig, { color: rng.pick(HAIR_COLORS), roughness: 1 })
+    if (rng.chance(type === 'runner' ? 0.7 : 0.35)) addRibWound(rig, rng, blood, bone)
   }
 
   return rig
