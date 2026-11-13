@@ -32,6 +32,7 @@ const SONG_OF: Record<MusicTrack, SongId | null> = {
   none: null,
   be: null,
   menu: 'menu',
+  title: 'bossLegacy',
   battle: 'combat',
   intermission: 'combat',
   boss: 'boss',
@@ -959,9 +960,10 @@ function createSongBank(ctx: BaseAudioContext, output: AudioNode, impulse: Audio
  * @param ctx 已创建的 AudioContext
  * @param output 输出总线（music 总线）
  * @param impulse 混响用的冲激响应
+ * @param eagerDnb 是否立刻渲染 Boss 曲的碎拍素材（游戏内为 true，菜单 BGM 用不到，传 false）
  */
-export function createMusic(ctx: AudioContext, output: AudioNode, impulse: AudioBuffer): MusicPlayer {
-  const { reverb, reverbReturn, build } = createSongBank(ctx, output, impulse, true)
+export function createMusic(ctx: AudioContext, output: AudioNode, impulse: AudioBuffer, eagerDnb = true): MusicPlayer {
+  const { reverb, reverbReturn, build } = createSongBank(ctx, output, impulse, eagerDnb)
 
   const songs: Song[] = []
   let active: Song | null = null

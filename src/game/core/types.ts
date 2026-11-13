@@ -471,7 +471,7 @@ export type SfxId =
   | 'wave_clear'
   | 'wave_start'
 
-export type MusicTrack = 'none' | 'menu' | 'battle' | 'intermission' | 'boss' | 'he' | 'ne' | 'be'
+export type MusicTrack = 'none' | 'menu' | 'title' | 'battle' | 'intermission' | 'boss' | 'he' | 'ne' | 'be'
 
 export interface SfxOptions {
   /** 世界坐标；给出则按距离衰减并做左右声像，不给则为 2D 音效 */
