@@ -36,6 +36,7 @@ import type {
 import { createAudio } from '../generators/audio'
 import { actorModels } from '../generators/geometry'
 import { createRng } from '../utils/random'
+import { damp } from '../utils/math'
 import { createAirdrops } from './airdrops'
 import { createBoss } from './boss'
 import { createEffects } from './effects'
@@ -319,6 +320,8 @@ export function createEngine(options: EngineOptions): GameEngine {
       hud.hitMarker.headshot = headshot
       hud.hitMarker.kill = kill
       hud.hitMarker.weak = weak
+      // 爆头 / Boss 弱点击杀播报语音（Qwen-Audio-TTS 预生成，资源缺失时静默）
+      if (kill && (headshot || weak)) audio.play('voice_headshot_kill')
       if (headshot && slowMoCooldown <= 0) {
         slowMoTimer = HEADSHOT.slowMoDuration
         slowMoCooldown = SLOWMO_COOLDOWN
@@ -472,6 +475,21 @@ export function createEngine(options: EngineOptions): GameEngine {
     cheatTimer = CHEAT_DELAY
     hud.cheatCountdown = CHEAT_DELAY
   }
+
+  /* ── 指针锁定恢复 ── */
+
+  /**
+   * 点击画面重新锁定指针。
+   * 用户按 ESC 退出锁定后浏览器有一段冷却期（Chrome 约 1.25 秒），暂停菜单点“继续”时的
+   * 立即重锁可能被静默拒绝；此后在画面上点一下即可恢复鼠标控制（点击算用户手势）。
+   */
+  const onCanvasClick = (): void => {
+    if (disposed) return
+    if (time.phase === 'select' || time.phase === 'ending') return
+    if (shellPaused || hud.cheatOpen || hud.weaponChoice !== null) return
+    input.requestLock()
+  }
+  dom.addEventListener('click', onCanvasClick)
 
   /* ── HUD 操作 ── */
 
@@ -627,6 +645,7 @@ export function createEngine(options: EngineOptions): GameEngine {
     const reload = player.reloadProgress
     hud.reloadProgress = reload < 0 ? -1 : Math.round(reload * 100) / 100
     hud.spread = Math.round(player.spread * 1000) / 1000
+    hud.crosshairHot = player.aimingEnemy && player.firing
 
     const interaction = player.interaction
     if (!interaction) {
@@ -756,13 +775,17 @@ export function createEngine(options: EngineOptions): GameEngine {
       if (halted) {
         hud.locked = input.locked
         hud.paused = shellPaused
+        hud.crosshairHot = false
         input.endFrame()
         return
       }
 
       if (slowMoCooldown > 0) slowMoCooldown -= realDt
       if (slowMoTimer > 0) slowMoTimer -= realDt
-      time.scale = slowMoTimer > 0 ? HEADSHOT.slowMoScale : 1
+      // 时间缩放用指数趋近平滑进出慢动作：瞬间跳变会让世界突然卡住又突然加速，像掉帧
+      const targetScale = slowMoTimer > 0 ? HEADSHOT.slowMoScale : 1
+      time.scale = damp(time.scale, targetScale, slowMoTimer > 0 ? 26 : 8.5, realDt)
+      if (Math.abs(time.scale - targetScale) < 0.005) time.scale = targetScale
       time.frame += 1
       if (playing) time.elapsed += realDt
 
@@ -788,6 +811,7 @@ export function createEngine(options: EngineOptions): GameEngine {
     dispose(): void {
       if (disposed) return
       disposed = true
+      dom.removeEventListener('click', onCanvasClick)
       bindHudActions(null)
       unsubscribe.forEach((off) => off())
       input.exitLock()

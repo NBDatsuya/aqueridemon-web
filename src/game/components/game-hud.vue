@@ -3,7 +3,9 @@
     <!-- 全屏反馈层 -->
     <div v-if="hud.damage.serial > 0" :key="`dmg-${hud.damage.serial}`" class="game-hud__damage" />
     <div v-if="lowHp" class="game-hud__low-hp" />
-    <div v-if="hud.slowMo" class="game-hud__slow-mo" />
+    <Transition name="slowmo">
+      <div v-if="hud.slowMo" class="game-hud__slow-mo" />
+    </Transition>
     <div v-if="hud.status === 'downed' || hud.status === 'dead'" class="game-hud__downed-edge" />
 
     <!-- 左上：任务信息 -->
@@ -90,7 +92,7 @@
     </Transition>
 
     <!-- 准星与命中标记 -->
-    <div v-if="showCrosshair" class="game-hud__crosshair">
+    <div v-if="showCrosshair" class="game-hud__crosshair" :class="{ 'game-hud__crosshair--hot': hud.crosshairHot }">
       <span class="game-hud__cross game-hud__cross--h" :style="{ transform: `translate(${-crossGap - 9}px, -1px)` }" />
       <span class="game-hud__cross game-hud__cross--h" :style="{ transform: `translate(${crossGap}px, -1px)` }" />
       <span class="game-hud__cross game-hud__cross--v" :style="{ transform: `translate(-1px, ${-crossGap - 9}px)` }" />
@@ -265,6 +267,16 @@ function aimStateText(t: HudAimTarget): string {
 .game-hud__slow-mo {
   @apply absolute inset-0;
   background: radial-gradient(ellipse at center, transparent 50%, rgb(255 255 255 / 0.18) 100%);
+}
+
+.slowmo-enter-active,
+.slowmo-leave-active {
+  transition: opacity 0.14s ease;
+}
+
+.slowmo-enter-from,
+.slowmo-leave-to {
+  opacity: 0;
 }
 
 .game-hud__downed-edge {
@@ -552,6 +564,7 @@ function aimStateText(t: HudAimTarget): string {
 .game-hud__cross {
   @apply absolute top-0 left-0 bg-white/90;
   box-shadow: 0 0 2px rgb(0 0 0 / 0.9);
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
 }
 
 .game-hud__cross--h {
@@ -564,6 +577,14 @@ function aimStateText(t: HudAimTarget): string {
 
 .game-hud__cross-dot {
   @apply absolute -top-px -left-px h-0.5 w-0.5 bg-white/80;
+  transition: background-color 0.1s ease;
+}
+
+/* 瞄准敌人并开火：准星变红 */
+.game-hud__crosshair--hot .game-hud__cross,
+.game-hud__crosshair--hot .game-hud__cross-dot {
+  @apply bg-red-500;
+  box-shadow: 0 0 4px rgb(239 68 68 / 0.9);
 }
 
 .game-hud__hit {
