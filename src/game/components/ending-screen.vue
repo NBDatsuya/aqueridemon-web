@@ -40,6 +40,7 @@
 
       <div class="ending-screen__actions">
         <GameButton label="再来一局" variant="primary" @click="restart" />
+        <GameButton label="制作人员" variant="secondary" @click="goCredits" />
         <GameButton label="退出" variant="secondary" @click="exit" />
       </div>
     </div>
@@ -121,6 +122,11 @@ function restart(): void {
 /** 返回标题页 */
 function exit(): void {
   router.push({ name: 'home' })
+}
+
+/** 跳到制作人员页（关于我们：团队、游戏与开源技术鸣谢） */
+function goCredits(): void {
+  router.push({ name: 'about-us' })
 }
 </script>
 
