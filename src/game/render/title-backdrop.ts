@@ -48,6 +48,8 @@ const PARALLAX = 2.5
 const PARALLAX_SMOOTH = 2
 /** 单帧 dt 上限（秒）：切回标签页时不跳 */
 const MAX_DT = 0.1
+/** 灯光脉动为 1 时曝光的增幅（音乐鉴赏页随节拍调亮） */
+const PULSE_EXPOSURE = 0.3
 
 interface Backdrop {
   readonly renderer: WebGLRenderer
@@ -67,6 +69,9 @@ interface PlanarPoint {
 let pending: Promise<Backdrop> | null = null
 /** 当前挂载的清理函数；释放实例时先停掉它的渲染循环 */
 let activeCleanup: (() => void) | null = null
+
+/** 灯光脉动 0..1：由页面每帧写入，下一帧渲染时折算成曝光 */
+let pulse = 0
 
 const aimTarget = new Vector3()
 
@@ -196,6 +201,7 @@ export async function mountTitleBackdrop(host: HTMLElement): Promise<() => void>
       world.update(dt)
     }
     aim(camera, backdrop.elapsed, parallax)
+    renderer.toneMappingExposure = EXPOSURE * (1 + PULSE_EXPOSURE * pulse)
     renderer.render(scene, camera)
   }
 
@@ -244,6 +250,15 @@ export async function mountTitleBackdrop(host: HTMLElement): Promise<() => void>
   }
   activeCleanup = cleanup
   return cleanup
+}
+
+/**
+ * 设置背景灯光的脉动强度（音乐鉴赏页随节拍调用，离开时置 0）。
+ * 开启“减少动态效果”时背景不逐帧重绘，脉动不会生效。
+ * @param level 0..1
+ */
+export function setTitleBackdropPulse(level: number): void {
+  pulse = Math.min(1, Math.max(0, level))
 }
 
 /** 释放背景的渲染器与场地（进入游戏前调用）；正在挂载的背景会先停止渲染 */

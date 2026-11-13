@@ -1079,6 +1079,10 @@ export function createMusic(ctx: AudioContext, output: AudioNode, impulse: Audio
 
 /** 离线渲染时第一步的起始时刻（秒），给第一下的起音留一点余量 */
 const RENDER_START = 0.05
+/** 离线渲染每块的时长（秒） */
+const RENDER_CHUNK = 3
+/** 每块多排的提前量（秒）：保证暂停点前后的音符都已就位 */
+const RENDER_LOOKAHEAD = 0.25
 
 export interface RenderSongOptions {
   /** 演奏时长（秒）：超过这个时刻的步不再排音符 */
@@ -1122,12 +1126,32 @@ export function renderSong(
   out.gain.setTargetAtTime(LEVEL[id] * mode, 0, FADE_IN[id] / 3)
 
   const end = RENDER_START + options.duration
-  for (let step = 0; ; step++) {
-    const time = RENDER_START + step * parts.stepDur
-    if (time >= end - 1e-6) break
-    parts.schedule(step, time)
-  }
   out.gain.setTargetAtTime(0, end, options.tail / 5)
   parts.sustained.forEach((source) => source.stop(total))
+
+  // 分块排音符：渲染到每块开头时暂停，只排接下来一块的音符再继续。
+  // 一次性排完会让上万个节点同时挂在图上，每个渲染量子都要遍历一遍，慢几十倍
+  let step = 0
+  const scheduleUntil = (horizon: number): void => {
+    for (;;) {
+      const time = RENDER_START + step * parts.stepDur
+      if (time >= end - 1e-6 || time >= horizon) break
+      parts.schedule(step, time)
+      step++
+    }
+  }
+  const quantum = 128 / sampleRate
+  const suspendAt = (time: number): void => {
+    // suspend 时刻按渲染量子取整
+    const at = Math.ceil(time / quantum) * quantum
+    if (at >= end || at >= total) return
+    ctx.suspend(at).then(() => {
+      scheduleUntil(at + RENDER_CHUNK + RENDER_LOOKAHEAD)
+      suspendAt(at + RENDER_CHUNK)
+      return ctx.resume()
+    }).catch(() => {})
+  }
+  scheduleUntil(RENDER_CHUNK + RENDER_LOOKAHEAD)
+  suspendAt(RENDER_CHUNK)
   return ctx.startRendering()
 }

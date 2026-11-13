@@ -67,15 +67,24 @@ function onDocMouseup() {
 const slots = useSlots();
 const hasFooter = () => !!slots.footer;
 
+// 插槽内容异步填充（如 v-html）时高度会变，滚动和 resize 事件都不会触发
+let contentObserver: ResizeObserver | null = null;
+
 onMounted(() => {
   if (hasFooter()) syncFooterOffset();
   updateThumb();
+  if (scrollArea.value) {
+    contentObserver = new ResizeObserver(() => updateThumb());
+    contentObserver.observe(scrollArea.value);
+    for (const child of Array.from(scrollArea.value.children)) contentObserver.observe(child);
+  }
   document.addEventListener('mousemove', onDocMousemove);
   document.addEventListener('mouseup', onDocMouseup);
   window.addEventListener('resize', onResize);
 });
 
 onBeforeUnmount(() => {
+  contentObserver?.disconnect();
   document.removeEventListener('mousemove', onDocMousemove);
   document.removeEventListener('mouseup', onDocMouseup);
   window.removeEventListener('resize', onResize);

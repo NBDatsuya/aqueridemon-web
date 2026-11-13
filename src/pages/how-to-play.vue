@@ -1,17 +1,21 @@
 <template>
   <div class="how-to-play">
-    <header class="how-to-play__hero">
-      <p class="how-to-play__eyebrow">{{ t('howToPlay.eyebrow') }}</p>
-      <h2 class="how-to-play__title">{{ t('howToPlay.title') }}</h2>
-      <div class="how-to-play__line" aria-hidden="true" />
-    </header>
+    <ScrollableContent>
+      <div class="how-to-play__inner">
+        <header class="how-to-play__hero">
+          <p class="how-to-play__eyebrow">{{ t('howToPlay.eyebrow') }}</p>
+          <h2 class="how-to-play__title">{{ t('howToPlay.title') }}</h2>
+          <div class="how-to-play__line" aria-hidden="true" />
+        </header>
 
-    <div class="how-to-play__content" v-html="contentHtml" />
+        <div class="how-to-play__content" v-html="contentHtml" />
 
-    <GameButton
-      :label="fromStart ? t('howToPlay.start') : t('common.backHome')"
-      @click="handleAction"
-    />
+        <GameButton
+          :label="fromStart ? t('howToPlay.start') : t('common.backHome')"
+          @click="handleAction"
+        />
+      </div>
+    </ScrollableContent>
   </div>
 </template>
 
@@ -21,6 +25,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { marked } from 'marked';
 import GameButton from '../components/game-button.vue';
+import ScrollableContent from '../components/scrollable-content.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -65,7 +70,11 @@ function handleAction() {
 @reference "../styles/hud.css";
 
 .how-to-play {
-  @apply flex min-h-screen w-screen flex-col items-center justify-center gap-10 px-6 py-14 overflow-y-auto bg-(--color-bg-page);
+  @apply relative h-screen w-full bg-(--color-bg-page);
+}
+
+.how-to-play__inner {
+  @apply flex min-h-full flex-col items-center justify-center gap-10 px-6 py-14;
 }
 
 .how-to-play__hero {
