@@ -9,12 +9,16 @@
         </header>
 
         <div class="how-to-play__content" v-html="contentHtml" />
-
-        <GameButton
-          :label="fromStart ? t('howToPlay.start') : t('common.backHome')"
-          @click="handleAction"
-        />
       </div>
+
+      <template #footer>
+        <div class="how-to-play__actions">
+          <GameButton
+            :label="fromStart ? t('howToPlay.start') : t('common.backHome')"
+            @click="handleAction"
+          />
+        </div>
+      </template>
     </ScrollableContent>
   </div>
 </template>
@@ -109,5 +113,9 @@ function handleAction() {
 
 .how-to-play__content :deep(strong) {
   @apply text-(--color-text-primary);
+}
+
+.how-to-play__actions {
+  @apply flex justify-center border-t border-(--color-border-subtle)/60 bg-(--color-bg-page)/80 p-4 backdrop-blur;
 }
 </style>
