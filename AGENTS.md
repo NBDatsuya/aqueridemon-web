@@ -45,7 +45,9 @@
 2. **While coding**, the canonical registry of names and state is the code itself and `docs/spec/spec.md`.
 3. **After coding**, **do not edit any docs immediately.** Keep a short list of what changed, then ask the user if they wish to sync docs and commit.
 4. **Pre-commit doc sync (user-initiated only).** When asked, do all of:
-   - Record one line per coherent change in `CHANGELOG` ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format, newest first, `YYYY-MM-DD HH:MM` timestamp prefix).
+   - Load the `changelog-principle` skill via the skill tool **before** editing `CHANGELOG`.
+   - Update `CHANGELOG` ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format, newest first, `YYYY-MM-DD HH:MM` timestamp prefix). Entries describe the net user-observable result since the last doc sync — not one line per change, per file, or per commit, and never a transcription of commit subjects. Reworks of an unreleased feature edit the original entry in place; a bug introduced and fixed inside the same unreleased period folds into that feature's entry instead of getting its own `Fixed` line.
+   - **Baseline rule:** this project has no releases yet, so the implicit baseline is the initial playable build. Before recording incremental deltas, `CHANGELOG` must describe the base game itself in terms a first-time reader can follow (genre, core loop, main systems). An entry must never reference a game concept (e.g. weapon crates, waves, boss fight) that the changelog has not already introduced.
    - Update `docs/spec/spec.md` with new gameplay mechanisms, controls, or level configurations.
 
 ### 0.6 Pre-Commit Review Confirmation
@@ -53,12 +55,14 @@
 - **Before executing any `git commit`, ask the user for review confirmation via the interactive question-asking tool.** Batch all commits into one call when multiple commits are proposed.
 - Present the confirmation question and choices translated into the user's active conversational language.
 - Question template (translated into the user's conversational language, e.g. Chinese when chatting in Chinese):
-  ```
+
+  ```plaintext
   Does this commit pass review:
   {{commit message including body}}
 
   Description: {{short description of the change in user language}}
   ```
+
 - Options per question (translated into the user's active conversational language):
   1. `Approve` — confirmation given; proceed with the commit.
   2. `Reject, defer commit` — rejected; do not commit, leave changes staged/unstaged as they are.
@@ -96,6 +100,7 @@ You are an AI game development partner building a Game Jam or indie game on **Mo
 
 - Compose styled component parts with `@apply` inside scoped `<style>` blocks.
 - Reference the stylesheet with `@reference` at the top of scoped styles:
+
   ```vue
   <style scoped>
   @reference "@/style.css";
@@ -105,6 +110,7 @@ You are an AI game development partner building a Game Jam or indie game on **Mo
   }
   </style>
   ```
+
 - Throwaway markup uses inline utility classes.
 
 ### 2.3 Verification
@@ -130,6 +136,7 @@ You are an AI game development partner building a Game Jam or indie game on **Mo
 ### 4.1 Multi-Agent Skill Discovery Architecture
 
 Skills provide domain-specific procedures and standards across different AI agent tooling:
+
 - **Canonical Source**: `.agents/skills/<name>/SKILL.md`.
 - **Discovery**: Synchronized into active agent directories (`.claude/skills/`, `<appDataDir>/skills/`, `.kilo/skills/`).
 
@@ -158,7 +165,8 @@ The following skills are strongly recommended and must be loaded during matching
 ### 6.1 CCC / 3C
 
 When the user inputs **`CCC`** or **`3C`**, execute in order:
-1. **CHANGELOG** — Append reader-facing entries to `CHANGELOG` (Keep a Changelog 1.1.0 format).
+
+1. **CHANGELOG** — Load the `changelog-principle` skill via the skill tool first, then write reader-facing entries following the §0.3 doc-sync rules: net user-observable diff since the last sync, baseline entry for a first-time reader, no commit-subject transcription (Keep a Changelog 1.1.0 format).
 2. **CODEBASE** — Sync `docs/spec/spec.md` with latest gameplay rules and mechanics.
 3. **COMMIT** — Confirm commit message and scope via review confirmation (0.6), then stage and commit.
 
