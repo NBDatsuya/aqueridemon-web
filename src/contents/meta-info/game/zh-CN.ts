@@ -13,7 +13,7 @@
 import type { GameMeta } from '../types'
 
 const zhCN: GameMeta = {
-  title: '混乱校园2前传：阿奎尔巨兽',
+  title: '混沌校园2前传：阿奎尔巨兽',
   subtitle: 'Chaos in School 2 Prologue: Aqueridemon',
   description:
     '感染爆发的校园足球场上，四名学生幸存者必须抵御越来越强的尸潮，击败巨型章鱼Boss阿奎尔，并全员登上救援直升机。所有模型、纹理和音效都由代码生成。',

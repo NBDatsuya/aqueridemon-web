@@ -8,7 +8,7 @@
 
 ## 📋 文档信息
 
-| 项目名称 | Chaos in School 2 Prologue: Aqueridemon<br>（混乱校园2前传：阿奎尔巨兽） |
+| 项目名称 | Chaos in School 2 Prologue: Aqueridemon<br>（混沌校园2前传：阿奎尔巨兽） |
 | --------- | ------ |
 | 简称 | CIS2 Prologue |
 | 类型 | 第一人称射击(FPS) / 合作生存 / 单关Demo |
