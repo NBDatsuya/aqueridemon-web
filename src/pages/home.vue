@@ -88,12 +88,7 @@ const subtitleVisible = computed(() => {
   @apply relative h-screen w-screen overflow-hidden bg-(--color-bg-page) select-none;
 }
 
-/* CS 1.6 风格：Verdana / Tahoma 一类的窄 UI 字体，硬边投影，不用圆角与色块 */
-.home-page__header,
-.home-page__menu {
-  font-family: Verdana, Tahoma, 'Microsoft YaHei', sans-serif;
-}
-
+/* CS 1.6 风格：硬边投影，不用圆角与色块 */
 .home-page__header {
   @apply absolute top-[7vh] left-[6vw] flex flex-col items-start gap-1 pr-[6vw];
 }

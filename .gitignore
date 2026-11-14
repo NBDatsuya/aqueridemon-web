@@ -4,6 +4,9 @@ logs
 npm-debug.log*
 pnpm-debug.log*
 
+# Font binaries (fetch with `pnpm fetch:fonts`; fonts.css is committed)
+public/fonts/*.woff2
+
 # Dependencies and build output
 node_modules
 dist
