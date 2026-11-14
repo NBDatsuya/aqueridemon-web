@@ -5,6 +5,13 @@
   /* 全局默认字体：英文 Inter，中文 Noto Sans SC（Tailwind 的 --default-font-family 会跟着变）。
      已单独指定字体的不受影响：--font-tech / --font-hud 与 font-mono。 */
   --font-sans:
-    "Inter var", "Inter", "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    "Inter var", "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+@layer base {
+  /* Inter 的 cv11 字符变体（数字 1 等易混淆字形带衬脚），其余字体没有该特性，不受影响 */
+  html {
+    font-feature-settings: "cv11";
+  }
 }
