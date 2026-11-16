@@ -595,7 +595,8 @@ export const BOSS = {
     minRange: 5,
     maxRange: 18,
   },
-  summon: { interval: 30, count: 2, type: 'runner' as EnemyType },
+  /** 零星召唤：间隔短、每次只来一两只；召唤时指挥部会提示（见 HQ_LINES.summon） */
+  summon: { interval: 18, count: 2, type: 'runner' as EnemyType },
   stagger: { duration: 2 },
   roar: { duration: 3 },
   shockwave: {
@@ -678,6 +679,50 @@ export const EVAC = {
   heartbeatFrom: 5,
   /** 起飞拉升演出时长（补充） */
   departTime: 6,
+  /**
+   * 直升机落地后的受损模型（补充）：丧尸贴近会啃咬机身，血量归零即 BE。
+   * zombieDamageMul 乘在丧尸单次伤害上；gun 是机身侧门的自动机枪，只打近处，伤害与精度有限。
+   */
+  heli: {
+    maxHp: 1000,
+    zombieDamageMul: 0.3,
+    /** 丧尸攻击判定用的机身半径（米） */
+    hullRadius: 3.2,
+    gun: { range: 28, rpm: 480, damage: 12, accuracy: 0.4, mountHeight: 1.6 },
+  },
+  /** 机上补给：每人 magsPerPerson 个弹夹，一次领一个弹夹（当前武器备弹 + magSize） */
+  resupply: { magsPerPerson: 6, range: 6, aiCooldown: 3, aiReserveRatio: 0.5 },
+} as const
+
+/**
+ * Boss 死后的尸潮：持续刷丧尸（补充）。通过 enemies.startSwarm 启动，
+ * 不计入波次，同屏数量受 maxConcurrent 限制。
+ */
+export const SWARM = {
+  /** 两只之间的刷出间隔范围（秒） */
+  gapMin: 1.2,
+  gapMax: 2.2,
+  /** 同屏上限（高于普通波次，制造压力） */
+  maxConcurrent: 20,
+  /** 类型权重 */
+  mix: { common: 0.55, runner: 0.35, tank: 0.1 },
+} as const
+
+/** 指挥部（字幕）台词 */
+export const HQ_LINES = {
+  speaker: '指挥部',
+  color: '#9fe6a0',
+  /** Boss 召唤小怪时的提示，随机一条 */
+  summon: ['注意，Boss 又在召唤小怪！', '后方出现新的感染者，留意侧翼！', '它在呼唤同类，别让它们围上来！'],
+  /** Boss 死后的三段播报：(延迟秒, 文本) */
+  bossDown: [
+    { at: 0, text: '恭喜勇士们……' },
+    { at: 2.8, text: '等等，它在释放信号，已判定为信息素，对丧尸有吸引作用。' },
+    { at: 6.8, text: '它在把成群结队的丧尸引来，拿走采样，然后尽快上飞机！' },
+  ],
+  heliHit: '直升机正在被攻击，守住机身！',
+  heliLow: '直升机快撑不住了！',
+  heliLost: '直升机被毁……任务失败。',
 } as const
 
 /* ── 喊话文案 ── */

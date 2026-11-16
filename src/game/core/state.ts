@@ -4,7 +4,7 @@
  */
 
 import { reactive } from 'vue'
-import { BOSS, CHARACTERS, PLAYER, SQUAD_ORDER } from './config'
+import { BOSS, CHARACTERS, EVAC, PLAYER, SQUAD_ORDER } from './config'
 import type {
   ActorStatus,
   BossWeakWindow,
@@ -80,8 +80,13 @@ export interface HudEndingMember {
   survived: boolean
 }
 
+/** BE 的原因：主控阵亡 / 直升机被毁 */
+export type HudEndingReason = 'death' | 'heliDestroyed'
+
 export interface HudEnding {
   kind: EndingKind
+  /** BE 的原因；缺省按主控阵亡处理 */
+  reason?: HudEndingReason
   /** 通关 / 生存时间（秒） */
   time: number
   kills: Record<EnemyType, number>
@@ -148,6 +153,13 @@ export interface HudState {
   heli: HeliState
   /** 撤离倒计时剩余秒数；未开始为 -1 */
   evacCountdown: number
+  /** 直升机当前血量 / 上限 */
+  heliHp: number
+  heliMaxHp: number
+  /** 主控剩余可领弹夹数 */
+  resupplyLeft: number
+  /** 主控此刻能否按 F 领弹夹 */
+  canResupply: boolean
 
   /** 命中反馈：serial 每次命中 +1 */
   hitMarker: { serial: number; headshot: boolean; kill: boolean; weak: boolean }
@@ -226,6 +238,10 @@ function initialState(): HudState {
     },
     heli: 'absent',
     evacCountdown: -1,
+    heliHp: EVAC.heli.maxHp,
+    heliMaxHp: EVAC.heli.maxHp,
+    resupplyLeft: EVAC.resupply.magsPerPerson,
+    canResupply: false,
     hitMarker: { serial: 0, headshot: false, kill: false, weak: false },
     damage: { serial: 0, amount: 0 },
     slowMo: false,

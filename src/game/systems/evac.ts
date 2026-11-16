@@ -10,8 +10,15 @@
 
 import { Mesh, Texture, Vector3 } from 'three'
 import type { Material } from 'three'
-import { EVAC, INTERACT, PAD } from '../core/config'
-import type { Combatant, EvacSystem, GameContext, HeliState, HelicopterAnimInput } from '../core/types'
+import { EVAC, INTERACT, PAD, WEAPONS } from '../core/config'
+import type {
+  Combatant,
+  EvacSystem,
+  GameContext,
+  HeliState,
+  HelicopterAnimInput,
+  StructureTarget,
+} from '../core/types'
 import { clamp, damp, dampAngle, invLerp, lerp, smoothstep, wrapAngle, yawOf } from '../utils/math'
 
 /* ── 表现参数（补充，不涉及玩法数值） ── */
@@ -78,6 +85,15 @@ const DUST_RING_RADIUS = 3.5
 const PARK_Y = -1000
 /** 起飞后机头前倾在多长的进度区间内渐入（按起飞进度 u 计） */
 const DEPART_PITCH_RAMP = 0.4
+/** 受击火花的最小间隔（秒）与火花高度（米） */
+const SPARK_INTERVAL = 0.25
+const SPARK_HEIGHT = 1.5
+/** 爆炸表现：每种粒子的爆发次数、震动强度与时长 */
+const EXPLODE_BURSTS = 4
+const EXPLODE_SHAKE = 1
+const EXPLODE_SHAKE_TIME = 1.2
+/** 机枪未命中时曳光偏离目标的水平范围（米，单侧） */
+const GUN_MISS_SPREAD = 1.2
 
 /** 时间进度 0..1；duration 不为正时视为已完成 */
 function progress(elapsed: number, duration: number): number {
@@ -384,7 +400,7 @@ export function createEvac(ctx: GameContext): EvacSystem {
 
   /** 已降落、存活、站在舱门登机范围内、且还有空座位 */
   const canBoard = (who: Combatant): boolean => {
-    if (state !== 'landed' || who.status !== 'alive') return false
+    if (state !== 'landed' || destroyed || who.status !== 'alive') return false
     rig.doorPoint.getWorldPosition(doorScratch)
     if (Math.hypot(who.position.x - doorScratch.x, who.position.z - doorScratch.z) > INTERACT.boardRange) return false
     return seatOf(who) < 0 && pickSeat(who) >= 0
@@ -393,7 +409,153 @@ export function createEvac(ctx: GameContext): EvacSystem {
   /** update 开头记下的 root 位置，用来算本帧位移 */
   const prevPos = new Vector3()
 
+  /* ── 血量 / 被毁 ── */
+
+  const gunCfg = EVAC.heli.gun
+  const maxHp: number = EVAC.heli.maxHp
+  let hp: number = maxHp
+  let destroyed = false
+  /** 受击火花的限频计时（秒） */
+  let sparkCd = 0
+
+  const structure: StructureTarget = {
+    position: landPos,
+    radius: EVAC.heli.hullRadius,
+    get alive(): boolean {
+      return state === 'landed' && !destroyed
+    },
+    damage(amount) {
+      if (state !== 'landed' || destroyed) return
+      hp -= amount * EVAC.heli.zombieDamageMul
+      if (sparkCd <= 0) {
+        sparkCd = SPARK_INTERVAL
+        scratch.set(landPos.x, landPos.y + SPARK_HEIGHT, landPos.z)
+        ctx.effects.burst(scratch, 'spark')
+      }
+      if (hp <= 0) explode()
+    },
+  }
+
+  /** 机身被毁：爆炸表现、停声，通知引擎（引擎判 BE） */
+  function explode(): void {
+    if (destroyed) return
+    hp = 0
+    destroyed = true
+    ctx.audio.setHelicopter(0)
+    ctx.audio.setHeartbeat(false)
+    heartbeatOn = false
+    soundLevel = 0
+    scratch.set(landPos.x, landPos.y + SPARK_HEIGHT, landPos.z)
+    for (let i = 0; i < EXPLODE_BURSTS; i++) {
+      ctx.effects.burst(scratch, 'glow')
+      ctx.effects.burst(scratch, 'smokeGrey')
+      ctx.effects.burst(scratch, 'smokeRed')
+    }
+    ctx.effects.shake(EXPLODE_SHAKE, EXPLODE_SHAKE_TIME)
+    ctx.audio.play('boss_shockwave', { position: landPos })
+    root.visible = false
+    ctx.events.emit('heliDestroyed', {})
+  }
+
+  /* ── 机枪 ── */
+
+  const gunPos = new Vector3()
+  const aimPos = new Vector3()
+  const gunDir = new Vector3()
+  const gunInterval = 60 / gunCfg.rpm
+  let gunCd = 0
+
+  const updateGun = (dt: number): void => {
+    gunCd -= dt
+    if (gunCd > 0) return
+    rig.doorPoint.getWorldPosition(gunPos)
+    gunPos.y += gunCfg.mountHeight
+    const enemy = ctx.enemies.nearest(gunPos, gunCfg.range)
+    if (!enemy || !enemy.alive) {
+      gunCd = 0
+      return
+    }
+    gunCd = gunInterval
+    enemy.aimCenter(aimPos)
+    const hit = Math.random() < gunCfg.accuracy
+    if (!hit) {
+      aimPos.x += (Math.random() - 0.5) * 2 * GUN_MISS_SPREAD
+      aimPos.y += (Math.random() - 0.5) * GUN_MISS_SPREAD
+      aimPos.z += (Math.random() - 0.5) * 2 * GUN_MISS_SPREAD
+    }
+    gunDir.subVectors(aimPos, gunPos).normalize()
+    ctx.effects.muzzleFlash(gunPos, gunDir)
+    ctx.effects.tracer(gunPos, aimPos)
+    ctx.audio.play('shot_mg3', { position: gunPos, volume: 0.5 })
+    if (hit) ctx.enemies.applyDamage(enemy, gunCfg.damage, { attacker: null, headshot: false, point: aimPos, direction: gunDir })
+  }
+
+  /* ── 补给 ── */
+
+  const magsMap = new Map<Combatant, number>()
+  const aiCooldowns = new Map<Combatant, number>()
+  const magsLeft = (who: Combatant): number => magsMap.get(who) ?? EVAC.resupply.magsPerPerson
+
+  const canResupply = (who: Combatant): boolean => {
+    if (state !== 'landed' || destroyed || who.status !== 'alive') return false
+    if (magsLeft(who) <= 0) return false
+    const weapon = who.weapon
+    if (!weapon || weapon.reserve >= WEAPONS[weapon.id].reserveMax) return false
+    rig.doorPoint.getWorldPosition(doorScratch)
+    const range = EVAC.resupply.range
+    const nearDoor = Math.hypot(who.position.x - doorScratch.x, who.position.z - doorScratch.z) <= range
+    return nearDoor || Math.hypot(who.position.x - landPos.x, who.position.z - landPos.z) <= range
+  }
+
+  const resupply = (who: Combatant): boolean => {
+    if (!canResupply(who)) return false
+    const weapon = who.weapon
+    if (!weapon) return false
+    const def = WEAPONS[weapon.id]
+    weapon.reserve = Math.min(def.reserveMax, weapon.reserve + def.magSize)
+    const left = magsLeft(who) - 1
+    magsMap.set(who, left)
+    ctx.audio.play('pickup')
+    ctx.events.emit('resupplied', { who, magsLeft: left })
+    return true
+  }
+
+  /** AI 队友：总弹药比例低于阈值时自动领弹夹，每人带冷却 */
+  const updateAiResupply = (dt: number): void => {
+    const squad = ctx.combatants
+    for (let i = 0; i < squad.length; i++) {
+      const who = squad[i]
+      if (!who || who.isPlayer || who.status !== 'alive') continue
+      const cd = (aiCooldowns.get(who) ?? 0) - dt
+      aiCooldowns.set(who, cd)
+      if (cd > 0) continue
+      const weapon = who.weapon
+      if (!weapon || !canResupply(who)) continue
+      const def = WEAPONS[weapon.id]
+      if ((weapon.mag + weapon.reserve) / (def.magSize + def.reserveMax) >= EVAC.resupply.aiReserveRatio) continue
+      if (resupply(who)) aiCooldowns.set(who, EVAC.resupply.aiCooldown)
+    }
+  }
+
   return {
+    get hp(): number {
+      return hp
+    },
+
+    maxHp,
+
+    get destroyed(): boolean {
+      return destroyed
+    },
+
+    structure,
+
+    magsLeft,
+
+    canResupply,
+
+    resupply,
+
     get heliState(): HeliState {
       return state
     },
@@ -458,8 +620,9 @@ export function createEvac(ctx: GameContext): EvacSystem {
     },
 
     update(dt) {
-      if (state === 'absent') return
+      if (state === 'absent' || destroyed) return
       clock += dt
+      sparkCd -= dt
       prevPos.copy(root.position)
 
       if (state === 'landed') updateLanded(dt)
@@ -478,6 +641,11 @@ export function createEvac(ctx: GameContext): EvacSystem {
       // departed 时已把音量置 0，之后不再写入
       if (state !== 'departed') updateSound(dt)
       updateWash()
+
+      if (state === 'landed') {
+        updateGun(dt)
+        updateAiResupply(dt)
+      }
     },
 
     dispose() {

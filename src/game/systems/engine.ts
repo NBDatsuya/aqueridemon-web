@@ -14,6 +14,7 @@ import {
   EVAC,
   GAME_SEED,
   HEADSHOT,
+  HQ_LINES,
   MAX_DELTA_TIME,
   PREP_DURATION,
   VOICE,
@@ -23,7 +24,7 @@ import {
 import { createEvents } from '../core/events'
 import { LOADING_LABELS, gameLoading } from '../core/loading'
 import { bindHudActions, hud, resetHud } from '../core/state'
-import type { HudEnding } from '../core/state'
+import type { HudEnding, HudEndingReason } from '../core/state'
 import type {
   AirdropCrate,
   Combatant,
@@ -70,6 +71,13 @@ const AMMO_LOW_RATIO = 0.25
 const CHEAT_TOGGLE_KEY = 'Backquote'
 /** 作弊指令提交后延迟多少秒生效 */
 const CHEAT_DELAY = 5
+/** 指挥部分段播报每条字幕的停留时间（秒） */
+const HQ_SUBTITLE_TIME = 4.5
+/** Boss 召唤提示的最短间隔（秒） */
+const SUMMON_HINT_COOLDOWN = 6
+/** 直升机血量提示阈值（占上限比例） */
+const HELI_HIT_RATIO = 0.4
+const HELI_LOW_RATIO = 0.2
 /** Round Clear 横幅停留多久后开始下一波 / Boss 战（秒） */
 const ROUND_CLEAR_DELAY = 2.5
 
@@ -200,6 +208,14 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
   let beHeartbeatReasserted = false
   /** 进行中的作弊剩余秒数；没有为 -1 */
   let cheatTimer = -1
+  /** Boss 死后指挥部分段播报：已流逝的真实秒数（未开始为 -1）与下一条的序号 */
+  let bossDownClock = -1
+  let bossDownIndex = 0
+  /** Boss 召唤提示的剩余冷却（秒） */
+  let summonHintCooldown = 0
+  /** 直升机血量提示是否已触发（40% / 20%） */
+  let heliHitHinted = false
+  let heliLowHinted = false
   let musicTrack: MusicTrack = 'none'
   let volumes = { bgm: 0.8, sfx: 1, muted: false }
 
@@ -233,10 +249,10 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     bannerTimer = duration
   }
 
-  const pushSubtitle = (speaker: string, color: string, text: string): void => {
+  const pushSubtitle = (speaker: string, color: string, text: string, duration = SUBTITLE_TIME): void => {
     subtitleSerial += 1
     hud.subtitles.push({ id: subtitleSerial, speaker, color, text })
-    subtitleTimers.push(SUBTITLE_TIME)
+    subtitleTimers.push(duration)
     while (hud.subtitles.length > SUBTITLE_MAX) {
       hud.subtitles.shift()
       subtitleTimers.shift()
@@ -262,6 +278,7 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
       case 'evac':
         if (evac.heliState !== 'landed') return player.actor.hasSample ? '等待直升机降落' : '提取阿奎尔样本'
         if (player.actor.status === 'boarded') return '等待起飞'
+        if (evac.hp < evac.maxHp * 0.5) return '守住直升机！击退靠近的丧尸'
         return player.actor.hasSample ? '前往停机坪登机' : '提取样本后前往停机坪登机'
       case 'ending':
         return ''
@@ -295,9 +312,13 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     return actor.hasSample ? 'HE' : 'NE_NO_SAMPLE'
   }
 
-  const finish = (kind: EndingKind): void => {
+  const finish = (kind: EndingKind, reason: HudEndingReason = 'death'): void => {
     if (time.phase === 'ending') return
     time.phase = 'ending'
+    enemies.setStructure(null)
+    enemies.stopSwarm()
+    deathTimer = -1
+    bossDownClock = -1
     time.scale = 1
     slowMoTimer = 0
     cheatTimer = -1
@@ -310,6 +331,7 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     const total = stats.kills.common + stats.kills.runner + stats.kills.tank
     const ending: HudEnding = {
       kind,
+      reason,
       time: time.elapsed,
       kills: { ...stats.kills },
       totalKills: total,
@@ -423,7 +445,26 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
       time.phase = 'evac'
       evac.bossDefeated()
       setMusic('battle')
-      showBanner(`${BOSS.name}已倒下`, `提取样本 · 直升机 ${EVAC.landAfterBossDeath} 秒后降落`, 'success', 5)
+      enemies.setStructure(evac.structure)
+      enemies.startSwarm()
+      bossDownClock = 0
+      bossDownIndex = 0
+      showBanner(`${BOSS.name}已倒下`, '拿走样本，尽快上飞机！丧尸正在涌来', 'success', 5)
+    }),
+    events.on('bossSummoned', () => {
+      if (summonHintCooldown > 0 || time.phase !== 'boss') return
+      summonHintCooldown = SUMMON_HINT_COOLDOWN
+      pushSubtitle(HQ_LINES.speaker, HQ_LINES.color, ctx.rng.pick(HQ_LINES.summon))
+    }),
+    events.on('heliDestroyed', () => {
+      if (time.phase === 'ending') return
+      pushSubtitle(HQ_LINES.speaker, HQ_LINES.color, HQ_LINES.heliLost)
+      showBanner('直升机被毁', '任务失败', 'danger', 5)
+      finish('BE', 'heliDestroyed')
+    }),
+    events.on('resupplied', ({ who, magsLeft }) => {
+      if (!who.isPlayer) return
+      showBanner('弹夹 +1', `剩余 ${magsLeft} 个`, 'info', 2)
     }),
     events.on('sampleTaken', () => showBanner('已获得阿奎尔样本', '带着它登上直升机', 'success')),
     events.on('airdropIncoming', ({ count }) => {
@@ -693,6 +734,10 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
 
     hud.heli = evac.heliState
     hud.evacCountdown = evac.countdown < 0 ? -1 : Math.ceil(evac.countdown)
+    hud.heliHp = Math.max(0, Math.ceil(evac.hp))
+    hud.heliMaxHp = evac.maxHp
+    hud.resupplyLeft = evac.magsLeft(actor)
+    hud.canResupply = evac.canResupply(actor)
     hud.slowMo = slowMoTimer > 0
   }
 
@@ -749,6 +794,30 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
           enemies.clearAll()
           beginBoss()
         }
+      }
+    }
+    if (summonHintCooldown > 0) summonHintCooldown -= realDt
+    if (bossDownClock >= 0) {
+      bossDownClock += realDt
+      const lines = HQ_LINES.bossDown
+      while (bossDownIndex < lines.length && bossDownClock >= (lines[bossDownIndex]?.at ?? 0)) {
+        const line = lines[bossDownIndex]
+        bossDownIndex += 1
+        if (line && time.phase === 'evac') {
+          pushSubtitle(HQ_LINES.speaker, HQ_LINES.color, line.text, HQ_SUBTITLE_TIME)
+        }
+      }
+      if (bossDownIndex >= lines.length) bossDownClock = -1
+    }
+    if (time.phase === 'evac' && evac.heliState === 'landed' && !evac.destroyed) {
+      const ratio = evac.hp / evac.maxHp
+      if (!heliHitHinted && ratio < HELI_HIT_RATIO) {
+        heliHitHinted = true
+        pushSubtitle(HQ_LINES.speaker, HQ_LINES.color, HQ_LINES.heliHit)
+      }
+      if (!heliLowHinted && ratio < HELI_LOW_RATIO) {
+        heliLowHinted = true
+        pushSubtitle(HQ_LINES.speaker, HQ_LINES.color, HQ_LINES.heliLow)
       }
     }
     if (deathTimer >= 0) {
@@ -848,6 +917,8 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     dispose(): void {
       if (disposed) return
       disposed = true
+      enemies.setStructure(null)
+      enemies.stopSwarm()
       dom.removeEventListener('click', onCanvasClick)
       bindHudActions(null)
       unsubscribe.forEach((off) => off())

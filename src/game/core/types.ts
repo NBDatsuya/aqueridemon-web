@@ -617,7 +617,7 @@ export interface EffectsSystem extends System {
   readonly shakeOffset: Vector3
 }
 
-export type InteractionKind = 'rescue' | 'airdrop' | 'sample' | 'board'
+export type InteractionKind = 'rescue' | 'airdrop' | 'sample' | 'board' | 'resupply'
 
 export interface InteractionInfo {
   kind: InteractionKind
@@ -681,6 +681,26 @@ export interface EnemySystem extends System {
   countWithin(pos: Vector3, radius: number): number
   /** 清场（不计击杀、不发事件） */
   clearAll(): void
+  /**
+   * 设置丧尸会优先攻击的建筑目标（撤离直升机）；传 null 取消。
+   * 目标比最近的存活成员更近的丧尸会改去攻击它，前摇结算时调用 target.damage。
+   */
+  setStructure(target: StructureTarget | null): void
+  /** Boss 死后开始源源不断地刷丧尸（受 SWARM 配置约束），直到 clearAll / stopSwarm */
+  startSwarm(): void
+  stopSwarm(): void
+}
+
+/** 丧尸可攻击的建筑（直升机） */
+export interface StructureTarget {
+  /** 中心的地面投影（世界坐标） */
+  readonly position: Vector3
+  /** 碰撞 / 攻击判定半径（米） */
+  readonly radius: number
+  /** 为 false 时丧尸忽略它 */
+  readonly alive: boolean
+  /** 丧尸前摇结算时调用；amount 为丧尸单次伤害原值（建筑自行乘减伤倍率） */
+  damage(amount: number, from: EnemyType): void
 }
 
 /** Boss 毒池的只读视图 */
@@ -782,6 +802,19 @@ export interface EvacSystem extends System {
   seatWorld(out: Vector3): Vector3
   /** 舱门外登机点的世界坐标（AI 跑向这里） */
   doorWorld(out: Vector3): Vector3
+  /** 直升机血量（落地后才会受损）；maxHp 见 EVAC.heli.maxHp */
+  readonly hp: number
+  readonly maxHp: number
+  /** 直升机是否已被击毁（此时发出 heliDestroyed，引擎判 BE） */
+  readonly destroyed: boolean
+  /** 供丧尸攻击的建筑视图；直升机落地且未毁时 alive 为 true */
+  readonly structure: StructureTarget
+  /** who 当前还剩几个弹夹可领；EVAC.resupply.magsPerPerson 起步 */
+  magsLeft(who: Combatant): number
+  /** who 当前能否领弹夹：已降落未毁、存活、在补给范围内、还有余量、当前武器备弹未满 */
+  canResupply(who: Combatant): boolean
+  /** 领一个弹夹（当前武器备弹 + magSize，封顶 reserveMax），发出 resupplied；成功返回 true */
+  resupply(who: Combatant): boolean
 }
 
 /* ── 事件 ── */
@@ -810,6 +843,12 @@ export interface GameEventMap {
   heliLanded: Record<string, never>
   boarded: { who: Combatant }
   heliDeparted: Record<string, never>
+  /** Boss 召唤了小怪（引擎据此让指挥部提示） */
+  bossSummoned: { count: number }
+  /** 直升机血量被打光（引擎判 BE） */
+  heliDestroyed: Record<string, never>
+  /** 在直升机上领了一个弹夹 */
+  resupplied: { who: Combatant; magsLeft: number }
   /** 角色喊话（HUD 字幕） */
   voice: { speaker: CharacterId; text: string }
 }

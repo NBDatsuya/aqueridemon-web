@@ -158,6 +158,7 @@ const TEXT = {
   sample: '按住 E 提取样本',
   airdrop: '按 E 拾取空投',
   crate: '按 E 打开主武器箱',
+  resupply: '按 F 领取弹夹',
 } as const
 
 const SHOT_SFX: Record<WeaponId, SfxId> = {
@@ -662,6 +663,9 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
     let target: Combatant | null = null
     let crate: AirdropCrate | null = null
     let duration = 0
+
+    // 机上补给走独立按键 F，不占用主提示槽（HUD 另行展示“按 F 领取弹夹”）
+    if (input.wasPressed('KeyF') && ctx.evac.canResupply(actor)) ctx.evac.resupply(actor)
 
     const rescue = findRescueTarget()
     if (rescue) {

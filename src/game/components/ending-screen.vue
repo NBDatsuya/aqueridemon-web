@@ -109,6 +109,7 @@ const lines = computed(() => {
     case 'NE_NO_SAMPLE':
       return ['但关键样本遗失', '无法分析病毒源头', '样本遗失，研究无法继续...']
     default:
+      if (props.ending.reason === 'heliDestroyed') return ['救援直升机被丧尸摧毁，没有人能离开。', '感染继续蔓延...']
       return [`${CHARACTERS[PLAYER_ID].name}阵亡`, '感染继续蔓延...']
   }
 })

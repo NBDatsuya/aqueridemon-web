@@ -70,6 +70,19 @@
       </div>
     </div>
 
+    <!-- 直升机血量条（落地后受丧尸攻击） -->
+    <div v-if="hud.heli === 'landed' && hud.phase === 'evac'" class="game-hud__heli" :class="{ 'game-hud__heli--low': heliLow }">
+      <div class="game-hud__heli-name">救援直升机 {{ hud.heliHp }} / {{ hud.heliMaxHp }}</div>
+      <div class="game-hud__bar game-hud__bar--boss">
+        <div class="game-hud__bar-fill game-hud__bar-fill--heli" :style="{ width: `${heliPercent}%` }" />
+      </div>
+    </div>
+
+    <!-- 补给提示 -->
+    <div v-if="hud.canResupply && hud.status === 'alive'" class="game-hud__resupply">
+      按 F 领取弹夹（剩 {{ hud.resupplyLeft }} 个）
+    </div>
+
     <!-- 撤离倒计时 -->
     <div v-if="hud.evacCountdown >= 0 && hud.heli === 'landed'" class="game-hud__evac" :class="{ 'game-hud__evac--urgent': hud.evacCountdown <= 10 }">
       <div class="game-hud__evac-label">撤离倒计时</div>
@@ -205,6 +218,8 @@ const showLockHint = computed(
 )
 /** 准星开合（像素）随散布变化 */
 const crossGap = computed(() => 4 + hud.spread * 520)
+const heliPercent = computed(() => (hud.heliMaxHp > 0 ? Math.min(100, (hud.heliHp / hud.heliMaxHp) * 100) : 0))
+const heliLow = computed(() => heliPercent.value < 30)
 const activeWeapon = computed(() => hud.weapons.find((w) => w.active))
 const activeEmpty = computed(() => !!activeWeapon.value && activeWeapon.value.mag === 0 && hud.reloadProgress < 0)
 const activeDry = computed(() => !!activeWeapon.value && activeWeapon.value.reserve === 0)
@@ -474,6 +489,34 @@ function mateState(m: HudSquadMember): string {
 .game-hud__boss-warning--weak {
   @apply bg-amber-500/80 text-slate-950;
   text-shadow: none;
+}
+
+/* ── 直升机血量 ── */
+.game-hud__heli {
+  @apply absolute top-[4.5rem] left-1/2 flex w-[min(40vw,520px)] -translate-x-1/2 flex-col items-center gap-1;
+}
+
+.game-hud__heli-name {
+  @apply text-sm font-bold tracking-widest text-sky-200;
+}
+
+.game-hud__bar-fill--heli {
+  background: linear-gradient(90deg, #0369a1, #38bdf8);
+}
+
+.game-hud__heli--low .game-hud__heli-name {
+  @apply text-red-400;
+  animation: hud-pulse 0.6s ease-in-out infinite;
+}
+
+.game-hud__heli--low .game-hud__bar-fill--heli {
+  background: linear-gradient(90deg, #991b1b, #ef4444);
+  animation: hud-pulse 0.6s ease-in-out infinite;
+}
+
+/* ── 补给提示 ── */
+.game-hud__resupply {
+  @apply absolute top-[72%] left-1/2 -translate-x-1/2 rounded bg-slate-950/70 px-4 py-1.5 text-base font-semibold text-emerald-200;
 }
 
 /* ── 撤离倒计时 ── */

@@ -184,6 +184,8 @@ export class Zombie implements EnemyActor {
   attackTime = 0
   /** 本次攻击是否已结算 */
   attackHit = false
+  /** 本次攻击的对象是建筑（撤离直升机）而不是小队成员 */
+  onStructure = false
   /** 距离下次可攻击的剩余时间 */
   cooldown = 0
 

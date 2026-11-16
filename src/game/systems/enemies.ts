@@ -17,6 +17,7 @@ import {
   SCALING_SPEED_RATIO,
   SPAWN_POINTS,
   SPAWN_RULES,
+  SWARM,
   WAVES,
   waveScaling,
 } from '../core/config'
@@ -32,6 +33,7 @@ import type {
   SfxId,
   SfxOptions,
   SpawnSide,
+  StructureTarget,
 } from '../core/types'
 import { clamp, damp, dampAngle, distXZSq, rayCapsule, raySphere, yawOf } from '../utils/math'
 import { ENEMY_TUNING as TUNE, Zombie } from './enemy-actor'
@@ -138,6 +140,12 @@ export function createEnemies(ctx: GameContext): EnemySystem {
   /** 每次 startWave 自增，用来区分丧尸属于哪一次波次 */
   let waveSerial = 0
   let mainSide: SpawnSide = 'north'
+
+  /** 丧尸可攻击的建筑（撤离直升机） */
+  let structure: StructureTarget | null = null
+  /** 尸潮：开启后按间隔持续补一只 */
+  let swarmActive = false
+  let swarmTimer = 0
 
   let spawnGap = 0
   let nextId = 1
@@ -304,6 +312,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     z.animSpeed = 0
     z.attackTime = 0
     z.attackHit = false
+    z.onStructure = false
     z.cooldown = 0
     z.dodgeRoll = noise.next()
     z.dodgeTimer = 0
@@ -378,7 +387,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
       spawnGap -= dt
       return
     }
-    if (active.length >= SPAWN_RULES.maxConcurrent) return
+    if (active.length >= (swarmActive ? SWARM.maxConcurrent : SPAWN_RULES.maxConcurrent)) return
     const fromExtra = extraPending.length > 0
     const queue = fromExtra ? extraPending : pending
     if (queue.length === 0) return
@@ -521,6 +530,41 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     }
 
     if (z.state !== 'move') return
+
+    // 建筑目标：比最近成员目标表面更近（或没有成员目标）时改去攻击建筑
+    const st = structure
+    let toStructure = false
+    let sdx = 0
+    let sdz = 0
+    let sSurface = 0
+    if (st !== null && st.alive) {
+      sdx = st.position.x - z.position.x
+      sdz = st.position.z - z.position.z
+      sSurface = Math.hypot(sdx, sdz) - st.radius - z.radius
+      toStructure =
+        target === null ||
+        sSurface < Math.hypot(target.position.x - z.position.x, target.position.z - z.position.z) - z.radius - target.radius
+    }
+    z.onStructure = toStructure
+    if (toStructure && st !== null) {
+      z.wandering = false
+      if (sSurface <= z.def.attackReach && z.cooldown <= 0) {
+        z.wantYaw = yawOf(sdx, sdz)
+        beginAttack(z)
+        return
+      }
+      if (sSurface <= z.def.attackReach * TUNE.stopRatio) {
+        z.wantYaw = yawOf(sdx, sdz)
+        z.moveScale = 0
+        return
+      }
+      ctx.world.steer(z.position, st.position, z.radius, tmpDir)
+      z.moveX = tmpDir.x
+      z.moveZ = tmpDir.z
+      z.moveScale = 1
+      return
+    }
+
     if (target === null) {
       thinkWander(z, dt)
       return
@@ -552,6 +596,15 @@ export function createEnemies(ctx: GameContext): EnemySystem {
   /** 前摇结束的结算：目标仍在范围内且够得着才造成伤害；tank 附带击退 */
   const strike = (z: Zombie): void => {
     if (z.type === 'tank') playAt(ATTACK_SFX.tank, z, 1, false)
+    if (z.onStructure) {
+      const st = structure
+      if (st === null || !st.alive) return
+      const sdx = st.position.x - z.position.x
+      const sdz = st.position.z - z.position.z
+      if (Math.hypot(sdx, sdz) - st.radius - z.radius > z.def.attackReach + TUNE.hitGrace) return
+      st.damage(z.damage, z.type)
+      return
+    }
     const target = z.target
     if (target === null || target.status !== 'alive') return
     const dx = target.position.x - z.position.x
@@ -570,7 +623,10 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     const windup = z.def.windup
     if (z.attackTime < windup) {
       const target = z.target
-      if (target !== null && target.status === 'alive') {
+      if (z.onStructure) {
+        const st = structure
+        if (st !== null && st.alive) z.wantYaw = yawOf(st.position.x - z.position.x, st.position.z - z.position.z)
+      } else if (target !== null && target.status === 'alive') {
         z.wantYaw = yawOf(target.position.x - z.position.x, target.position.z - z.position.z)
       }
       return
@@ -928,7 +984,39 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     return count
   }
 
+  const setStructure = (target: StructureTarget | null): void => {
+    structure = target
+  }
+
+  /** 按 SWARM.mix 权重抽一个类型 */
+  const pickSwarmType = (): EnemyType => {
+    const mix = SWARM.mix
+    let roll = ctx.rng.next() * (mix.common + mix.runner + mix.tank)
+    if ((roll -= mix.common) < 0) return 'common'
+    if ((roll -= mix.runner) < 0) return 'runner'
+    return 'tank'
+  }
+
+  const startSwarm = (): void => {
+    swarmActive = true
+    swarmTimer = 0
+  }
+
+  const stopSwarm = (): void => {
+    swarmActive = false
+  }
+
+  /** 尸潮计时：到点且队列里没有积压时补一只（不计入波次） */
+  const updateSwarm = (dt: number): void => {
+    if (!swarmActive) return
+    swarmTimer -= dt
+    if (swarmTimer > 0) return
+    swarmTimer = ctx.rng.range(SWARM.gapMin, SWARM.gapMax)
+    if (extraPending.length === 0) extraPending.push(pickSwarmType())
+  }
+
   const clearAll = (): void => {
+    swarmActive = false
     for (const z of active) recycle(z)
     for (const z of dying) recycle(z)
     active.length = 0
@@ -952,6 +1040,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     if (hurtSfxGap > 0) hurtSfxGap -= dt
 
     updateStages(dt)
+    updateSwarm(dt)
     updateSpawning(dt)
 
     // 远处的丧尸每 farUpdateEvery 帧决策一次（按 id 错开），位移仍然每帧
@@ -981,6 +1070,7 @@ export function createEnemies(ctx: GameContext): EnemySystem {
 
   const dispose = (): void => {
     clearAll()
+    structure = null
     for (const z of created) {
       ctx.scene.remove(z.holder)
       z.holder.remove(z.rig.root)
@@ -1015,6 +1105,9 @@ export function createEnemies(ctx: GameContext): EnemySystem {
     nearest,
     countWithin,
     clearAll,
+    setStructure,
+    startSwarm,
+    stopSwarm,
     update,
     dispose,
   }

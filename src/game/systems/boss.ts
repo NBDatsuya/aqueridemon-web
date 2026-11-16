@@ -60,6 +60,8 @@ const POOL_SLOTS = BOSS.spit.pools * 2
 const FIRST_SHOCK_DELAY = 8
 /** 冲击波蓄力期间的红色波纹条数 */
 const SHOCK_RIPPLES = 2
+/** 每次召唤选 runner 的概率，其余为 common */
+const SUMMON_RUNNER_CHANCE = 0.6
 /** 召唤动作时长（秒） */
 const SUMMON_ANIM_TIME = 0.8
 /** 命中暴露弱点时受击音效的最小间隔（秒） */
@@ -326,7 +328,8 @@ export function createBoss(ctx: GameContext): BossSystem {
     if (summonTimer > 0) return
     summonTimer += BOSS.summon.interval
     summonAnim = SUMMON_ANIM_TIME
-    ctx.enemies.spawnExtra(BOSS.summon.type, BOSS.summon.count)
+    ctx.enemies.spawnExtra(rng.chance(SUMMON_RUNNER_CHANCE) ? 'runner' : 'common', BOSS.summon.count)
+    ctx.events.emit('bossSummoned', { count: BOSS.summon.count })
     ctx.audio.play('boss_summon', sfxAt)
   }
 
