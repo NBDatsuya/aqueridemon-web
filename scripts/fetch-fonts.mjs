@@ -1,5 +1,5 @@
 // 拉取正文默认字体到 public/fonts/ 并生成 fonts.css：
-// Inter 用 rsms.me 官方的 InterVariable（cv11 变体在 style.css 里经 font-feature-settings 开启），
+// Inter 用 rsms.me 官方的 InterVariable（cv02和cv11 变体在 style.css 里经 font-feature-settings 开启），
 // Noto Sans SC 走 Google Fonts 的 unicode-range 子集。
 // dev 阶段本机装了字体时 @font-face 的 local() 直接命中，不需要跑这个脚本；
 // build 前必须跑一次，否则没装字体的用户会拿到 404。
