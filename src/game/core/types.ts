@@ -15,7 +15,7 @@ import type { Rng } from '../utils/random'
 
 /* ── 基础枚举 ── */
 
-export type WeaponId = 'ak47' | 'mg3' | 'mp5' | 'qbz95'
+export type WeaponId = 'ak47' | 'mg3' | 'mp5' | 'qbz95' | 'barrett'
 /** 小队编号：0 = 主控，1..3 = AI 队友；名字只在 config 的 CHARACTERS 里设置 */
 export type CharacterId = 0 | 1 | 2 | 3
 export type TeammateId = Exclude<CharacterId, 0>
@@ -428,6 +428,7 @@ export type SfxId =
   | 'shot_mg3'
   | 'shot_mp5'
   | 'shot_qbz95'
+  | 'shot_barrett'
   | 'dry'
   | 'reload'
   | 'shell'

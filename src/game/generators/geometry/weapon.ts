@@ -1,5 +1,5 @@
 /**
- * 武器模型：AK-47 / MG3 / MP5 / QBZ-95。
+ * 武器模型：AK-47 / MG3 / MP5 / QBZ-95 / Barrett M82A1。
  *
  * 约定：root 原点在握把顶端（虎口位置），枪管朝本地 +Z，+Y 向上；枪的左侧是 +X、右侧（抛壳口）是 -X。
  * 每个型号由 weapon-*.ts 生成一份蓝图：侧面轮廓挤出（带倒角）、截面放样与车削得到的零件按材质合并，
@@ -12,6 +12,7 @@ import type { MeshStandardMaterial } from 'three'
 import type { WeaponId, WeaponRig } from '../../core/types'
 import { createSurfaceMaterial } from '../textures/pbr'
 import { buildAk47 } from './weapon-ak47'
+import { buildBarrett } from './weapon-barrett'
 import type { WeaponBlueprint } from './weapon-kit'
 import { buildMg3 } from './weapon-mg3'
 import { buildMp5 } from './weapon-mp5'
@@ -23,6 +24,7 @@ const BLUEPRINTS: Record<WeaponId, () => WeaponBlueprint> = {
   mg3: buildMg3,
   mp5: buildMp5,
   qbz95: buildQbz95,
+  barrett: buildBarrett,
 }
 
 /** 各型号的蓝图缓存：几何体由同型号的所有实例共享，永不释放 */

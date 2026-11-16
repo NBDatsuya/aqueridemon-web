@@ -393,9 +393,30 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     spread: 0.008,
     moveMul: 1,
   },
+  /**
+   * 穿越火线同款巴雷特 M82A1：10 发弹匣、一击重创的“大炮”。数值为补充：
+   * 300 伤害一枪带走普通 / 快速丧尸，坦克两枪（爆头一枪）；射速慢、换弹慢、移动 -15%。
+   */
+  barrett: {
+    id: 'barrett',
+    name: 'Barrett M82A1',
+    kind: '反器材狙击枪',
+    trait: '一击重创，射速慢，移动 -15%',
+    damage: 300,
+    rpm: 36,
+    magSize: 10,
+    reserveMax: 60,
+    reloadTime: 3.2,
+    falloffStart: 150,
+    falloffEnd: 200,
+    falloffMin: 1,
+    recoil: 2.4,
+    spread: 0.002,
+    moveMul: 0.85,
+  },
 }
 
-export const WEAPON_ORDER: readonly WeaponId[] = ['ak47', 'mg3', 'mp5', 'qbz95']
+export const WEAPON_ORDER: readonly WeaponId[] = ['ak47', 'mg3', 'mp5', 'qbz95', 'barrett']
 
 /** 子弹最大检测距离 */
 export const MAX_SHOT_DISTANCE = 160

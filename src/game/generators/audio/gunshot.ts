@@ -38,6 +38,8 @@ export interface GunSoundConfig {
   tail: number
   /** 饱和失真强度，越大越厚重 */
   drive: number
+  /** 枪声之后拉栓上膛 + 弹壳落地的后音：起始时间（秒），缺省为没有 */
+  bolt?: number
 }
 
 /** 四把枪的音色：AK 低沉、MP5 较脆、MG3 厚重、QBZ 干净 */
@@ -46,6 +48,7 @@ export const GUN_SOUNDS: Record<WeaponId, GunSoundConfig> = {
   mp5: { frequency: 300, duration: 0.32, decay: 0.1, crack: 1, thump: 0.45, brightness: 5200, tail: 0.22, drive: 1.7 },
   mg3: { frequency: 105, duration: 0.6, decay: 0.2, crack: 0.85, thump: 1.25, brightness: 2000, tail: 0.55, drive: 3.2 },
   qbz95: { frequency: 220, duration: 0.38, decay: 0.12, crack: 0.6, thump: 0.65, brightness: 3600, tail: 0.25, drive: 1.3 },
+  barrett: { frequency: 70, duration: 1.5, decay: 0.28, crack: 1, thump: 1.6, brightness: 1800, tail: 0.8, drive: 3.6, bolt: 0.75 },
 }
 
 /**
@@ -78,6 +81,17 @@ export function synthesizeGunshot(sr: number, rng: Rng, config: GunSoundConfig):
   mix(out, sr, metalClick(sr, rng, 3200, 0.03), 0.1, 0.03 + d * 0.15)
 
   saturate(out, config.drive)
+
+  // 拉栓上膛 + 弹壳落地：在失真之后叠加，保持清脆
+  if (config.bolt !== undefined) {
+    const at = config.bolt
+    mix(out, sr, metalClick(sr, rng, 1900, 0.04), 0.25, at)
+    mix(out, sr, noiseBand(sr, rng, 0.14, 'bandpass', sweep(1100, 3000, 0.13), 3, trapezoid(0.015, 0.08, 0.04)), 0.12, at + 0.01)
+    mix(out, sr, metalClick(sr, rng, 1600, 0.06), 0.3, at + 0.15)
+    mix(out, sr, tone(sr, 0.08, 'sine', sweep(180, 120, 0.05), decay(0.02)), 0.2, at + 0.15)
+    mix(out, sr, renderShell(sr, rng), 0.18, at + 0.26)
+  }
+
   fadeEdges(out, sr, 0, 0.03)
   return normalize(out, 0.95)
 }

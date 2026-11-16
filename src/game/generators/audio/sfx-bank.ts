@@ -109,7 +109,7 @@ function def(render: SfxRenderer, priority: SfxPriority, gain: number, tuning: S
   }
 }
 
-function shot(weapon: WeaponId, gain: number, throttle: number): SfxDef {
+function shot(weapon: WeaponId, gain: number, throttle: number, tuning: SfxTuning = {}): SfxDef {
   return def((sr, rng) => synthesizeGunshot(sr, rng, GUN_SOUNDS[weapon]), 2, gain, {
     throttle,
     maxVoices: 4,
@@ -117,6 +117,7 @@ function shot(weapon: WeaponId, gain: number, throttle: number): SfxDef {
     maxDistance: 160,
     reverb: 0.18,
     jitter: 0.03,
+    ...tuning,
   })
 }
 
@@ -155,6 +156,7 @@ export const SFX: Record<SfxId, SfxDef> = {
   shot_mg3: shot('mg3', 0.85, 0.035),
   shot_mp5: shot('mp5', 0.7, 0.03),
   shot_qbz95: shot('qbz95', 0.75, 0.035),
+  shot_barrett: shot('barrett', 1.0, 0.5, { refDistance: 14, maxDistance: 260, reverb: 0.4, maxVoices: 2 }),
   dry: def(renderDry, 2, 0.5, { throttle: 0.12, refDistance: 2, maxDistance: 15 }),
   reload: def(renderReload, 2, 0.6, { throttle: 0.3, maxVoices: 2, refDistance: 2, maxDistance: 18 }),
   shell: def(renderShell, 1, 0.3, { throttle: 0.06, refDistance: 1.5, maxDistance: 12, jitter: 0.12 }),
@@ -279,6 +281,7 @@ export const SFX_IDS: readonly SfxId[] = [
   'shot_mg3',
   'shot_mp5',
   'shot_qbz95',
+  'shot_barrett',
   'dry',
   'reload',
   'shell',

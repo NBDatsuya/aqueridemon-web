@@ -165,6 +165,7 @@ const SHOT_SFX: Record<WeaponId, SfxId> = {
   mg3: 'shot_mg3',
   mp5: 'shot_mp5',
   qbz95: 'shot_qbz95',
+  barrett: 'shot_barrett',
 }
 
 /** 数字键 1..N 对应武器槽位 */
