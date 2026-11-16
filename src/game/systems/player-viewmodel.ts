@@ -5,14 +5,14 @@
  * 为了不穿进场景，整体缩小后贴近相机：root 的缩放为 VIEW_MODEL_SCALE，
  * 其内部的位置偏移全部按“原尺寸”的米来写，投影到屏幕上的大小与原尺寸持枪一致。
  *
- * 双臂（Samuel 的袖子、袖口条纹与握拳的手）与枪挂在同一个枢轴下，跟着摇摆、冲刺、换弹、切枪与后坐一起动。
+ * 双臂（主控的袖子、袖口条纹与握拳的手）与枪挂在同一个枢轴下，跟着摇摆、冲刺、换弹、切枪与后坐一起动。
  * 姿态与队友第三人称持枪一致：右拳握住握把，左拳从下方托住护木；肩膀放在画面外，肘部由双骨 IK 求出。
  * 不同武器的护木位置不同，换上新枪时重新求解一次手臂。
  */
 
 import { Group, Matrix4, Mesh, MeshStandardMaterial, Vector3 } from 'three'
 import type { BufferGeometry } from 'three'
-import { CHARACTERS, PLAYER } from '../core/config'
+import { CHARACTERS, PLAYER, PLAYER_ID } from '../core/config'
 import type { ActorModels, WeaponId, WeaponRig, WeaponState } from '../core/types'
 import { FIST_AXIS, humanoidGeometry } from '../generators/geometry/humanoid-shapes'
 import { getTexture } from '../generators/textures'
@@ -63,7 +63,7 @@ const VIEW = {
 
 /** 第一人称手臂的尺寸与肩膀 / 肘部朝向 */
 const ARM = {
-  /** 手的缩放（握拳几何体的单位，取 Samuel 的前臂半径） */
+  /** 手的缩放（握拳几何体的单位，取 主控的前臂半径） */
   hand: 0.057,
   upper: 0.3,
   fore: 0.3,
@@ -96,6 +96,7 @@ const SUPPORT: Record<WeaponId, { z: number; y: number }> = {
   mp5: { z: 0.25, y: 0.027 },
   mg3: { z: 0.31, y: 0.04 },
   qbz95: { z: 0.19, y: 0.024 },
+  barrett: { z: 0.34, y: 0.05 },
 }
 /** 拳心轴线高出护木底面的距离（让手掌贴在护木下方） */
 const SUPPORT_LIFT = 0.016
@@ -226,8 +227,8 @@ export function createViewModel(models: ActorModels): ViewModel {
   pivot.position.set(HOLD.x, HOLD.y, HOLD.z)
   root.add(pivot)
 
-  /* 双臂：配色取自 Samuel（袖子 = 上衣，袖口条纹 = 点缀色），挂在枢轴下跟枪一起动 */
-  const samuel = CHARACTERS.samuel
+  /* 双臂：配色取自主控（袖子 = 上衣，袖口条纹 = 点缀色），挂在枢轴下跟枪一起动 */
+  const samuel = CHARACTERS[PLAYER_ID]
   const sleeveMat = new MeshStandardMaterial({ color: samuel.bodyColor, map: getTexture('cloth'), roughness: 0.9 })
   const cuffMat = new MeshStandardMaterial({ color: samuel.accentColor, roughness: 0.8 })
   const skinMat = new MeshStandardMaterial({ color: samuel.headColor, roughness: 0.62 })

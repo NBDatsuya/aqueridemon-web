@@ -1,10 +1,10 @@
 /**
  * 四名角色的人形模型：在共用骨架上按 CHARACTERS 配色，并加上各自的识别特征。
  *
- * - Samuel：灰蓝校服，灰色衣领与袖口条纹。
- * - Football Master：红橙短袖球衣 + 深色短裤 + 橙色球袜，身体宽 1.1 倍，左臂黄色队长袖标。
- * - Manman：白上衣 + 浅蓝裙摆与长裤，身体宽 0.9 倍、略矮，深棕色马尾。
- * - 91Z：黑卫衣，兜帽罩住头顶与两侧，脸下半部是口罩（薄盒）。
+ * - 0 号（主控）：灰蓝校服，灰色衣领与袖口条纹。
+ * - 1 号：红橙短袖球衣 + 深色短裤 + 橙色球袜，身体宽 1.1 倍，左臂黄色队长袖标。
+ * - 2 号：白上衣 + 浅蓝裙摆与长裤，身体宽 0.9 倍、略矮，深棕色马尾。
+ * - 3 号：黑卫衣，兜帽罩住头顶与两侧，脸下半部是口罩（薄盒）。
  */
 
 import { CHARACTERS } from '../../core/config'
@@ -28,16 +28,16 @@ interface CharacterStyle {
 
 /** CHARACTERS 没有给出的外观补充项 */
 const STYLES: Record<CharacterId, CharacterStyle> = {
-  samuel: { height: 1.8, headRadius: 0.17, hair: 0x2b2420, shoe: 0xe6e6e8, phase: 0.4, deadSide: 1 },
-  football: { height: 1.84, headRadius: 0.17, hair: 0x1b1613, shoe: 0x18181a, phase: 2.1, deadSide: -1 },
-  manman: { height: 1.7, headRadius: 0.163, hair: 0x3b2a20, shoe: 0xf2f2f4, phase: 3.7, deadSide: 1 },
-  z91: { height: 1.8, headRadius: 0.17, hair: 0x121216, shoe: 0x141416, phase: 5.2, deadSide: -1 },
+  0: { height: 1.8, headRadius: 0.17, hair: 0x2b2420, shoe: 0xe6e6e8, phase: 0.4, deadSide: 1 },
+  1: { height: 1.84, headRadius: 0.17, hair: 0x1b1613, shoe: 0x18181a, phase: 2.1, deadSide: -1 },
+  2: { height: 1.7, headRadius: 0.163, hair: 0x3b2a20, shoe: 0xf2f2f4, phase: 3.7, deadSide: 1 },
+  3: { height: 1.8, headRadius: 0.17, hair: 0x121216, shoe: 0x141416, phase: 5.2, deadSide: -1 },
 }
 
 const EYE_COLOR = 0x16181c
-/** Football Master 的球袜 */
+/** 1 号的球袜 */
 const SOCK_COLOR = 0xf08a3c
-/** Samuel 的腰带 */
+/** 0 号的腰带 */
 const BELT_COLOR = 0x26221f
 
 /** 脸：一对深色椭圆眼睛（一个网格），让正面朝向一眼可辨 */
@@ -95,8 +95,8 @@ export function createCharacter(id: CharacterId): HumanoidRig {
   const legs: HumanoidLook = { color: def.legColor, map: cloth, roughness: 0.9 }
   const shoe: HumanoidLook = { color: style.shoe, roughness: 0.8 }
   const accent: HumanoidLook = { color: def.accentColor, roughness: 0.8 }
-  // Manman 的头发与马尾用 accentColor，其余角色用 STYLES 里的发色
-  const hair: HumanoidLook = { color: id === 'manman' ? def.accentColor : style.hair, roughness: 0.95 }
+  // 2 号的头发与马尾用 accentColor，其余角色用 STYLES 里的发色
+  const hair: HumanoidLook = { color: id === 2 ? def.accentColor : style.hair, roughness: 0.95 }
   const eyes: HumanoidLook = { color: EYE_COLOR, roughness: 0.5 }
 
   const rig = createHumanoid({
@@ -113,8 +113,8 @@ export function createCharacter(id: CharacterId): HumanoidRig {
     legs,
     shoe,
     // 球衣是短袖：前臂露出皮肤；小腿是球袜
-    forearm: id === 'football' ? skin : undefined,
-    shin: id === 'football' ? { color: SOCK_COLOR, map: cloth, roughness: 0.9 } : undefined,
+    forearm: id === 1 ? skin : undefined,
+    shin: id === 1 ? { color: SOCK_COLOR, map: cloth, roughness: 0.9 } : undefined,
     armed: true,
     phase: style.phase,
     deadSide: style.deadSide,
@@ -124,7 +124,7 @@ export function createCharacter(id: CharacterId): HumanoidRig {
   const r = d.headRadius
   addEyes(rig, eyes)
 
-  if (id === 'samuel') {
+  if (id === 0) {
     addHair(rig, hair, 1.06)
     addCollar(rig, accent)
     addArmBand(rig, 'L', accent, 0.7, 0.04)
@@ -134,11 +134,11 @@ export function createCharacter(id: CharacterId): HumanoidRig {
     belt.scale.set(d.torsoWidth * 0.47, 0.036, d.torsoDepth * 0.5)
     belt.position.set(0, 0.052, 0)
     belt.castShadow = false
-  } else if (id === 'football') {
+  } else if (id === 1) {
     addHair(rig, hair, 1.04)
     // 左臂队长袖标
     addArmBand(rig, 'L', accent, 0.42, 0.075)
-  } else if (id === 'manman') {
+  } else if (id === 2) {
     addHair(rig, hair, 1.07)
     // 马尾：后脑一个发结 + 向后下方垂下的锥台
     const knot = rig.addMesh(rig.parts.head, 'sphere', hair)

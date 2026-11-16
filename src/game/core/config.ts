@@ -140,9 +140,21 @@ export const HEADSHOT = {
   slowMoScale: 0.35,
 } as const
 
+/**
+ * 小队成员以编号引用：0 = 主控，1..3 = AI 队友。其他代码只用编号与 SQUAD_ORDER 编排，
+ * 角色名字只在下面的 CHARACTERS（唯一的 profile）里设置，其余位置经 CHARACTERS[id].name 读取。
+ */
+export const PLAYER_ID: CharacterId = 0
+
+/** 小队顺序（HUD 与 ctx.combatants 均按此顺序） */
+export const SQUAD_ORDER: readonly CharacterId[] = [0, 1, 2, 3]
+
+/** AI 队友编号，顺序同 SQUAD_ORDER 去掉主控 */
+export const TEAMMATE_IDS: readonly TeammateId[] = [1, 2, 3]
+
 export const CHARACTERS: Record<CharacterId, CharacterDef> = {
-  samuel: {
-    id: 'samuel',
+  0: {
+    id: 0,
     name: 'Samuel',
     isPlayer: true,
     bodyColor: 0x4a6a8f,
@@ -152,8 +164,8 @@ export const CHARACTERS: Record<CharacterId, CharacterDef> = {
     bodyScale: 1,
     hudColor: '#7aa2d6',
   },
-  football: {
-    id: 'football',
+  1: {
+    id: 1,
     name: 'Football Master',
     isPlayer: false,
     bodyColor: 0xd9432b,
@@ -163,9 +175,9 @@ export const CHARACTERS: Record<CharacterId, CharacterDef> = {
     bodyScale: 1.1,
     hudColor: '#f0623f',
   },
-  manman: {
-    id: 'manman',
-    name: 'Manman',
+  2: {
+    id: 2,
+    name: 'Helen',
     isPlayer: false,
     bodyColor: 0xf2f4f7,
     legColor: 0x8fb4dc,
@@ -174,9 +186,9 @@ export const CHARACTERS: Record<CharacterId, CharacterDef> = {
     bodyScale: 0.9,
     hudColor: '#a9cdf2',
   },
-  z91: {
-    id: 'z91',
-    name: '91Z先生',
+  3: {
+    id: 3,
+    name: 'Roy',
     isPlayer: false,
     bodyColor: 0x1e1f24,
     legColor: 0x2b2d33,
@@ -187,12 +199,9 @@ export const CHARACTERS: Record<CharacterId, CharacterDef> = {
   },
 }
 
-/** 小队顺序（HUD 与 ctx.combatants 均按此顺序） */
-export const SQUAD_ORDER: readonly CharacterId[] = ['samuel', 'football', 'manman', 'z91']
-
 /** AI 队友差异化参数 */
 export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
-  football: {
+  1: {
     engageRange: 30,
     headshotRate: 0.15,
     rescueEnemyLimit: 2,
@@ -208,7 +217,7 @@ export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
     postBearing: 1.15,
     leash: 30,
   },
-  manman: {
+  2: {
     engageRange: 25,
     headshotRate: 0.2,
     rescueEnemyLimit: Infinity,
@@ -223,7 +232,7 @@ export const TEAMMATE_AI: Record<TeammateId, TeammateAiDef> = {
     postBearing: 2.5,
     leash: 15,
   },
-  z91: {
+  3: {
     engageRange: 28,
     headshotRate: 0.35,
     rescueEnemyLimit: 3,
@@ -654,35 +663,35 @@ export const EVAC = {
 
 export const VOICE = {
   downed: {
-    samuel: '需要支援！',
-    football: '该死，我中弹了！',
-    manman: '救救我...',
-    z91: '掩护我...',
+    0: '需要支援！',
+    1: '该死，我中弹了！',
+    2: '救救我...',
+    3: '掩护我...',
   } satisfies Record<CharacterId, string>,
   /** 主控阵亡时仍存活的队友的喊话 */
   playerDeath: {
-    football: '不！撑住！',
-    manman: 'Samuel！',
-    z91: '该死...',
+    1: '不！撑住！',
+    2: `${CHARACTERS[PLAYER_ID].name}！`,
+    3: '该死...',
   } satisfies Record<TeammateId, string>,
   rescuing: {
-    football: '别动，我拉你起来！',
-    manman: '坚持住，我来了。',
-    z91: '我来。',
+    1: '别动，我拉你起来！',
+    2: '坚持住，我来了。',
+    3: '我来。',
   } satisfies Record<TeammateId, string>,
   lowAmmo: {
-    football: '他妈的子弹呢？',
-    manman: '快没子弹了！',
-    z91: '子弹快打空了！',
+    1: '他妈的子弹呢？',
+    2: '快没子弹了！',
+    3: '子弹快打空了！',
   } satisfies Record<TeammateId, string>,
   bossSpawn: {
-    football: '那是什么鬼东西？！',
-    manman: '打它头上发光的地方！',
-    z91: '大家伙来了。',
+    1: '那是什么鬼东西？！',
+    2: '打它头上发光的地方！',
+    3: '大家伙来了。',
   } satisfies Record<TeammateId, string>,
   heliLanded: {
-    football: '直升机到了，快上！',
-    manman: '快上飞机！',
-    z91: '该走了。',
+    1: '直升机到了，快上！',
+    2: '快上飞机！',
+    3: '该走了。',
   } satisfies Record<TeammateId, string>,
 } as const

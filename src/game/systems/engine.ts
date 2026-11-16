@@ -10,6 +10,7 @@ import {
   AIRDROP,
   BOSS,
   CHARACTERS,
+  PLAYER_ID,
   EVAC,
   GAME_SEED,
   HEADSHOT,
@@ -339,7 +340,7 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
 
   const unsubscribe = [
     events.on('shotFired', ({ shooter, hit }) => {
-      if (shooter !== 'samuel') return
+      if (shooter !== PLAYER_ID) return
       stats.shotsFired += 1
       if (hit) stats.shotsHit += 1
     }),
@@ -357,7 +358,7 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     }),
     events.on('enemyKilled', ({ type, attacker, headshot }) => {
       stats.kills[type] += 1
-      if (attacker === 'samuel' && headshot) stats.headshots += 1
+      if (attacker === PLAYER_ID && headshot) stats.headshots += 1
     }),
     events.on('waveStarted', ({ wave, total }) => {
       audio.play('wave_start')

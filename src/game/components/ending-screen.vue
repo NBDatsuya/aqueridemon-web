@@ -52,6 +52,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { EVENT_KEYS, useEventBus } from '@/core'
 import { GameButton } from '@/hud'
+import { CHARACTERS, PLAYER_ID } from '../core/config'
 import { hud } from '../core/state'
 import type { HudEnding } from '../core/state'
 import { formatTime } from '../utils/math'
@@ -108,7 +109,7 @@ const lines = computed(() => {
     case 'NE_NO_SAMPLE':
       return ['但关键样本遗失', '无法分析病毒源头', '样本遗失，研究无法继续...']
     default:
-      return ['Samuel阵亡', '感染继续蔓延...']
+      return [`${CHARACTERS[PLAYER_ID].name}阵亡`, '感染继续蔓延...']
   }
 })
 

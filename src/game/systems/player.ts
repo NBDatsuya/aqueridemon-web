@@ -1,5 +1,5 @@
 /**
- * 主控 Samuel：第一人称控制器、武器与射击、交互读条、相机。
+ * 主控（编号 0）：第一人称控制器、武器与射击、交互读条、相机。
  *
  * 相机有四种机位：存活时第一人称；倒地时身后低角度第三人称（可爬行）；
  * 阵亡时停在尸体旁缓慢拉远下沉；登机后固定在机舱座位上环顾。
@@ -8,7 +8,7 @@
 
 import { Vector3 } from 'three'
 import { CombatantBase } from '../core/combatant'
-import { HEADSHOT, INTERACT, MAX_SHOT_DISTANCE, PLAYER, PLAYER_START, WEAPONS } from '../core/config'
+import { HEADSHOT, INTERACT, MAX_SHOT_DISTANCE, PLAYER, PLAYER_ID, PLAYER_START, WEAPONS } from '../core/config'
 import type {
   ActorStatus,
   AirdropCrate,
@@ -184,7 +184,7 @@ const tpTarget = new Vector3()
 const tpDir = new Vector3()
 
 /** 复用的伤害信息：point / direction 指向上面的临时向量，接收方需要保存时应自行拷贝 */
-const damageInfo: DamageInfo = { attacker: 'samuel', headshot: false, point: hitPoint, direction: shotDir }
+const damageInfo: DamageInfo = { attacker: PLAYER_ID, headshot: false, point: hitPoint, direction: shotDir }
 
 /**
  * 创建主控系统：第一人称移动与视角、武器射击与换弹、E 键交互、各状态下的相机。
@@ -195,7 +195,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
   const camera = ctx.camera
   camera.rotation.order = 'YXZ'
 
-  const actor = new CombatantBase('samuel', ctx.events)
+  const actor = new CombatantBase(PLAYER_ID, ctx.events)
   actor.position.set(PLAYER_START.x, 0, PLAYER_START.z)
 
   const forward = new Vector3()
@@ -204,7 +204,7 @@ export function createPlayer(ctx: GameContext): PlayerSystem {
 
   // 身体模型：第一人称时显示躯干、腰带与双腿（低头能看到胸腹和脚），头与双臂只投射阴影（双臂由视图模型代替）；
   // 倒地 / 阵亡的第三人称镜头里整身显示
-  const body = ctx.models.createCharacter('samuel')
+  const body = ctx.models.createCharacter(PLAYER_ID)
   ctx.scene.add(body.root)
   const bodyAnim: HumanoidAnimInput = { speed: 0, pose: 'downed', action: 'none', actionProgress: 0 }
   /**

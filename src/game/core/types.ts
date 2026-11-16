@@ -16,8 +16,9 @@ import type { Rng } from '../utils/random'
 /* ── 基础枚举 ── */
 
 export type WeaponId = 'ak47' | 'mg3' | 'mp5' | 'qbz95'
-export type CharacterId = 'samuel' | 'football' | 'manman' | 'z91'
-export type TeammateId = Exclude<CharacterId, 'samuel'>
+/** 小队编号：0 = 主控，1..3 = AI 队友；名字只在 config 的 CHARACTERS 里设置 */
+export type CharacterId = 0 | 1 | 2 | 3
+export type TeammateId = Exclude<CharacterId, 0>
 export type EnemyType = 'common' | 'runner' | 'tank'
 /** alive 可行动；downed 倒地待救；dead 阵亡；boarded 已登机（锁定） */
 export type ActorStatus = 'alive' | 'downed' | 'dead' | 'boarded'
@@ -651,7 +652,7 @@ export interface PlayerSystem extends System {
 }
 
 export interface TeammateSystem extends System {
-  /** 三名 AI 队友，顺序：Football Master、Manman、91Z 先生 */
+  /** 三名 AI 队友，编号 1..3 */
   readonly actors: readonly Combatant[]
 }
 
@@ -872,6 +873,6 @@ export interface GameContext {
   readonly boss: BossSystem
   readonly airdrops: AirdropSystem
   readonly evac: EvacSystem
-  /** 四人小队：[Samuel, Football Master, Manman, 91Z 先生] */
+  /** 四人小队，按 SQUAD_ORDER：编号 0 为主控，1..3 为 AI 队友 */
   readonly combatants: readonly Combatant[]
 }

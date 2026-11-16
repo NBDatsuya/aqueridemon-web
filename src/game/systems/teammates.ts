@@ -1,5 +1,5 @@
 /**
- * AI 队友系统：Football Master、Manman、91Z 先生。
+ * AI 队友系统：编号 1..3 的三名 AI 队友（名字见 config 的 CHARACTERS）。
  *
  * 结构：
  * - 决策层（每 0.15–0.3 秒一次，三人错开）：选目标、评估威胁、按 SPEC 行为树的优先级定出当前意图
@@ -23,6 +23,7 @@ import {
   PLAY_BOUNDS,
   SQUAD_START,
   TEAMMATE_AI,
+  TEAMMATE_IDS,
   TEAMMATE_TACTICS,
   VOICE,
   WEAPONS,
@@ -57,7 +58,7 @@ const TT = TEAMMATE_TACTICS
 /* ── 常量 ── */
 
 /** 队友顺序（与 ctx.combatants 的后三位一致） */
-const TEAMMATE_ORDER: readonly TeammateId[] = ['football', 'manman', 'z91']
+const TEAMMATE_ORDER = TEAMMATE_IDS
 
 const SHOT_SFX: Record<WeaponId, SfxId> = {
   ak47: 'shot_ak47',
@@ -414,7 +415,7 @@ function writeSlot(def: TeammateAiDef, px: number, pz: number, yaw: number, out:
 
 /**
  * 创建 AI 队友系统：三名队友的状态、模型、行为树与射击。
- * actors 在工厂执行期间即建好，顺序为 football、manman、z91。
+ * actors 在工厂执行期间即建好，顺序为编号 1、2、3。
  * @param ctx 游戏上下文（工厂执行期间只使用 scene / rng / events / models / audio）
  */
 export function createTeammates(ctx: GameContext): TeammateSystem {
@@ -441,7 +442,7 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
 
   for (let i = 0; i < TEAMMATE_ORDER.length; i++) {
     const id = TEAMMATE_ORDER[i]
-    if (!id) continue
+    if (id === undefined) continue
     const mate = createMate(id, i)
     mates.push(mate)
     actors.push(mate.actor)
@@ -777,7 +778,7 @@ export function createTeammates(ctx: GameContext): TeammateSystem {
     }
   }
 
-  /** P2：最近的、没被别人占用的倒地成员；周围敌人太多时放弃（Manman 的上限是 Infinity） */
+  /** P2：最近的、没被别人占用的倒地成员；周围敌人太多时放弃（2 号队友的上限是 Infinity） */
   function findRescueTarget(m: Mate): Combatant | null {
     const a = m.actor
     const list = ctx.combatants

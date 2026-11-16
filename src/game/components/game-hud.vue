@@ -146,7 +146,7 @@
     <!-- 左下：生命（CF 风格） -->
     <div class="game-hud__health">
       <div class="game-hud__health-row">
-        <span class="game-hud__health-name">Samuel <i class="game-hud__health-label">HP</i></span>
+        <span class="game-hud__health-name">{{ playerName }} <i class="game-hud__health-label">HP</i></span>
         <span class="game-hud__health-value" :style="{ color: hpColor(hud.hp) }">{{ hud.hp }}</span>
       </div>
       <div class="game-hud__bar">
@@ -182,11 +182,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { PLAYER, WAVES } from '../core/config'
+import { CHARACTERS, PLAYER, PLAYER_ID, WAVES } from '../core/config'
 import { hud } from '../core/state'
 import type { HudSquadMember } from '../core/state'
 import { formatTime } from '../utils/math'
 
+/** 主控名字取自 CHARACTERS 里的 profile */
+const playerName = CHARACTERS[PLAYER_ID].name
 const teammates = computed(() => hud.squad.filter((m) => !m.isPlayer))
 const aimTarget = computed(() => hud.aimTarget)
 const lowHp = computed(() => hud.status === 'alive' && hud.hp <= 30)
