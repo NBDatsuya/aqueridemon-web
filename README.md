@@ -42,6 +42,8 @@ pnpm preview    # 预览构建产物
 
 ## 技术栈
 
+本游戏基于 [Momako](https://github.com/momakoding/momako)（momako-san）GameJam 框架制作。
+
 Vue 3（`<script setup>` + TypeScript）、TresJS / Three.js 渲染、Tailwind CSS v4、Pinia、Vue Router、Vue i18n（中英文界面）、Vite 构建。
 
 ## 项目结构
