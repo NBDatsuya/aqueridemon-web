@@ -9,6 +9,12 @@
         <p v-for="w in ending.lastWords" :key="w.speaker">{{ w.speaker }}：“{{ w.text }}”</p>
       </div>
 
+      <div class="ending-screen__rank">
+        <div class="ending-screen__rank-label">小队评级</div>
+        <div class="ending-screen__rank-tier" :style="{ color: rank.color }">{{ rank.label }}</div>
+        <div class="ending-screen__rank-score">{{ ending.finalScore.toLocaleString('en-US') }} 分</div>
+      </div>
+
       <div class="ending-screen__stats">
         <h2 class="ending-screen__stats-title">战斗统计</h2>
         <dl class="ending-screen__list">
@@ -28,12 +34,19 @@
           <dd>{{ Math.round(ending.accuracy * 100) }}%</dd>
           <dt>爆头数</dt>
           <dd>{{ ending.headshots }}</dd>
+          <dt>战斗得分</dt>
+          <dd>{{ ending.baseScore.toLocaleString('en-US') }}</dd>
+          <dt>直升机撤离加成</dt>
+          <dd>+{{ ending.heliBonus.toLocaleString('en-US') }}</dd>
+          <dt>小队总分</dt>
+          <dd>{{ ending.finalScore.toLocaleString('en-US') }}</dd>
           <dt>Boss样本</dt>
           <dd>{{ ending.hasSample ? '✅ 已携带' : '❌ 遗失' }}</dd>
         </dl>
         <ul class="ending-screen__squad">
           <li v-for="m in ending.squad" :key="m.id">
-            {{ m.survived ? '✅' : '❌' }} {{ m.name }}{{ m.isPlayer ? '（主控）' : '' }}{{ m.survived ? '' : '（阵亡）' }}
+            {{ m.survived ? '✅' : '❌' }} {{ m.name }}{{ m.isPlayer ? '（主控）' : '' }}{{ m.survived ? '' : '（阵亡）' }} ·
+            {{ m.score.toLocaleString('en-US') }} 分
           </li>
         </ul>
       </div>
@@ -52,7 +65,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { EVENT_KEYS, useEventBus } from '@/core'
 import { GameButton } from '@/hud'
-import { CHARACTERS, PLAYER_ID } from '../core/config'
+import { CHARACTERS, PLAYER_ID, rankForScore } from '../core/config'
 import { hud } from '../core/state'
 import type { HudEnding } from '../core/state'
 import { formatTime } from '../utils/math'
@@ -67,6 +80,8 @@ const eventBus = useEventBus()
 
 const survivors = computed(() => props.ending.squad.filter((m) => m.survived).map((m) => m.name))
 const fallen = computed(() => props.ending.squad.filter((m) => !m.survived).map((m) => m.name))
+/** 结尾评级：按小队总分（含直升机撤离加成）取档位 */
+const rank = computed(() => rankForScore(props.ending.finalScore))
 
 const tone = computed(() => {
   switch (props.ending.kind) {
@@ -184,6 +199,23 @@ function goCredits(): void {
 
 .ending-screen__words {
   @apply mt-2 text-sm text-slate-400 italic;
+}
+
+.ending-screen__rank {
+  @apply mt-3 flex flex-col items-center gap-1;
+}
+
+.ending-screen__rank-label {
+  @apply text-xs font-bold tracking-[0.4em] text-slate-400;
+}
+
+.ending-screen__rank-tier {
+  @apply text-3xl font-black tracking-[0.3em];
+  text-shadow: 0 0 18px rgb(255 255 255 / 0.25);
+}
+
+.ending-screen__rank-score {
+  @apply text-sm font-semibold text-slate-200 tabular-nums;
 }
 
 .ending-screen__stats {

@@ -8,6 +8,7 @@ import type {
   CharacterId,
   EnemyDef,
   EnemyType,
+  ScoreRankDef,
   SpawnPoint,
   TeammateAiDef,
   TeammateId,
@@ -707,6 +708,34 @@ export const SWARM = {
   /** 类型权重 */
   mix: { common: 0.55, runner: 0.35, tank: 0.1 },
 } as const
+
+/* ── 评分与评级（补充） ── */
+
+export const SCORE = {
+  /** 击杀一只丧尸的基础分 */
+  zombieKill: 200,
+  /** 爆头击杀丧尸的精准击杀分（替代基础分，不叠加） */
+  precisionKill: 500,
+  /** 每发造成丧尸 / Boss 伤害的子弹随机分区间（闭区间） */
+  perHit: { min: 30, max: 60 },
+  /** 撤离结算系数：直升机加成 = 小队战斗分 × heliBonusRate × 撤离时机身剩余血量比例 */
+  heliBonusRate: 0.5,
+  /** 评级档位，按小队总分从高到低匹配（min 为达线分） */
+  ranks: [
+    { key: 'crystal', label: '水晶', color: '#7dd3fc', min: 70000 },
+    { key: 'gold', label: '黄金', color: '#fbbf24', min: 50000 },
+    { key: 'silver', label: '白银', color: '#e2e8f0', min: 30000 },
+    { key: 'bronze', label: '青铜', color: '#d97706', min: 0 },
+  ] as readonly ScoreRankDef[],
+} as const
+
+/** 按小队总分取评级档位 */
+export function rankForScore(score: number): ScoreRankDef {
+  for (const rank of SCORE.ranks) {
+    if (score >= rank.min) return rank
+  }
+  return SCORE.ranks[SCORE.ranks.length - 1] as ScoreRankDef
+}
 
 /** 指挥部（字幕）台词 */
 export const HQ_LINES = {

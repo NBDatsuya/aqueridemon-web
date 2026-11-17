@@ -20,33 +20,41 @@
     <div v-if="hud.phase !== 'ending'" class="game-hud__top-center">
       <div class="game-hud__round">{{ roundLabel }}</div>
       <div class="game-hud__stats">
-        <span class="game-hud__stat"><b>{{ hud.kills }}</b><i>当前分数</i></span>
+        <span class="game-hud__stat"><b>{{ playerScore.toLocaleString('en-US') }}</b><i>分数</i></span>
         <span class="game-hud__clock">{{ formatTime(hud.elapsed) }}</span>
         <span class="game-hud__stat"><b>{{ hud.enemiesAlive }}</b><i>剩余NPC</i></span>
       </div>
     </div>
 
-    <!-- 右侧：队友状态（红条列表） -->
-    <ul class="game-hud__squad">
-      <li
-        v-for="m in teammates"
-        :key="m.id"
-        class="game-hud__mate"
-        :class="`game-hud__mate--${m.status}`"
-        :style="{ borderLeftColor: m.color }"
-      >
-        <div class="game-hud__mate-head">
-          <span class="game-hud__mate-name">{{ m.name }}</span>
-          <span class="game-hud__mate-state">{{ mateState(m) }}</span>
-        </div>
-        <div class="game-hud__bar game-hud__bar--thin">
-          <div class="game-hud__bar-fill game-hud__bar-fill--ally" :style="{ width: `${hpPercent(m.hp)}%` }" />
-        </div>
-        <div class="game-hud__mate-weapon">{{ m.weapon }}<span v-if="m.ammoLow"> · 弹药不足</span></div>
-      </li>
-    </ul>
+    <!-- 右上：个人排名（小队四人按分数排序；分数变动时条目上下滑动、分数滚动） -->
+    <div v-if="hud.phase !== 'ending'" class="game-hud__squad">
+      <TransitionGroup name="rank" tag="ul" class="game-hud__squad-list">
+        <li
+          v-for="(m, i) in scoreboard"
+          :key="m.id"
+          class="game-hud__mate"
+          :class="[`game-hud__mate--${m.status}`, { 'game-hud__mate--self': m.isPlayer }]"
+          :style="{ borderLeftColor: m.color }"
+        >
+          <div class="game-hud__mate-head">
+            <span class="game-hud__mate-rank">{{ i + 1 }}</span>
+            <span class="game-hud__mate-name">{{ m.name }}</span>
+            <span class="game-hud__mate-state">{{ mateState(m) }}</span>
+            <span class="game-hud__mate-score-box">
+              <Transition name="score-roll">
+                <span :key="m.score" class="game-hud__mate-score">{{ m.score.toLocaleString('en-US') }}</span>
+              </Transition>
+            </span>
+          </div>
+          <div class="game-hud__bar game-hud__bar--thin">
+            <div class="game-hud__bar-fill game-hud__bar-fill--ally" :style="{ width: `${hpPercent(m.hp)}%` }" />
+          </div>
+          <div class="game-hud__mate-weapon">{{ m.weapon }}<span v-if="m.ammoLow"> · 弹药不足</span></div>
+        </li>
+      </TransitionGroup>
+    </div>
 
-    <!-- 右上：样本图标 -->
+    <!-- 右上：样本图标（位于排名面板下方） -->
     <div v-if="hud.hasSample" class="game-hud__sample">
       <span class="game-hud__sample-orb" />
       阿奎尔样本
@@ -202,7 +210,6 @@ import { formatTime } from '../utils/math'
 
 /** 主控名字取自 CHARACTERS 里的 profile */
 const playerName = CHARACTERS[PLAYER_ID].name
-const teammates = computed(() => hud.squad.filter((m) => !m.isPlayer))
 const aimTarget = computed(() => hud.aimTarget)
 const lowHp = computed(() => hud.status === 'alive' && hud.hp <= 30)
 const showCrosshair = computed(() => hud.status === 'alive' && hud.phase !== 'ending')
@@ -218,6 +225,10 @@ const showLockHint = computed(
 )
 /** 准星开合（像素）随散布变化 */
 const crossGap = computed(() => 4 + hud.spread * 520)
+/** 右上角个人排名：按分数降序；分数变动引起换位时由 TransitionGroup 上下滑动 */
+const scoreboard = computed(() => hud.squad.slice().sort((a, b) => b.score - a.score))
+/** 主控个人分数（顶部中央 topbar 显示） */
+const playerScore = computed(() => hud.squad.find((m) => m.isPlayer)?.score ?? 0)
 const heliPercent = computed(() => (hud.heliMaxHp > 0 ? Math.min(100, (hud.heliHp / hud.heliMaxHp) * 100) : 0))
 const heliLow = computed(() => heliPercent.value < 30)
 const activeWeapon = computed(() => hud.weapons.find((w) => w.active))
@@ -371,9 +382,13 @@ function mateState(m: HudSquadMember): string {
     0 0 2px rgb(255 255 255 / 0.6);
 }
 
-/* ── 队友（CF 风格红条列表） ── */
+/* ── 右上：个人排名（合并小队状态栏） ── */
 .game-hud__squad {
-  @apply font-hud absolute top-14 right-4 m-0 flex w-56 list-none flex-col gap-1.5 p-0;
+  @apply font-hud absolute top-[3.6rem] right-4 w-56;
+}
+
+.game-hud__squad-list {
+  @apply m-0 flex list-none flex-col gap-1.5 p-0;
 }
 
 .game-hud__mate {
@@ -382,6 +397,10 @@ function mateState(m: HudSquadMember): string {
   @apply border-y border-sky-400/15 bg-slate-950/60 px-2.5 py-1.5;
   background-image: linear-gradient(180deg, rgb(12 28 52 / 0.55), rgb(3 10 24 / 0.7));
   background-clip: padding-box;
+}
+
+.game-hud__mate--self {
+  @apply border-sky-400/45;
 }
 
 .game-hud__mate--downed {
@@ -401,16 +420,60 @@ function mateState(m: HudSquadMember): string {
   @apply mb-1 flex items-center justify-between gap-1.5 text-sm;
 }
 
+.game-hud__mate-rank {
+  @apply w-3.5 shrink-0 text-center text-xs font-bold text-sky-300/85 tabular-nums;
+}
+
 .game-hud__mate-name {
-  @apply truncate font-semibold text-white;
+  @apply min-w-0 flex-1 truncate font-semibold text-white;
 }
 
 .game-hud__mate-state {
-  @apply text-xs font-semibold text-sky-300/90 tabular-nums;
+  @apply shrink-0 text-xs font-semibold text-sky-300/90 tabular-nums;
+}
+
+/* 分数滚动窗口：新旧数值上下滑动交替 */
+.game-hud__mate-score-box {
+  @apply relative h-5 w-16 shrink-0 overflow-hidden;
+}
+
+.game-hud__mate-score {
+  @apply block text-right text-sm font-bold text-white tabular-nums;
+  text-shadow: 0 0 8px rgb(125 211 252 / 0.55);
+}
+
+.game-hud__mate--self .game-hud__mate-score {
+  @apply text-amber-300;
 }
 
 .game-hud__mate-weapon {
   @apply mt-1 text-[11px] tracking-wide text-slate-400;
+}
+
+/* 分数变动引起名次变化时，条目整体上下滑动 */
+.rank-move {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.score-roll-enter-active,
+.score-roll-leave-active {
+  transition:
+    transform 0.22s ease,
+    opacity 0.22s ease;
+}
+
+.score-roll-enter-from {
+  transform: translateY(110%);
+  opacity: 0;
+}
+
+.score-roll-leave-to {
+  transform: translateY(-110%);
+  opacity: 0;
+}
+
+.score-roll-leave-active {
+  @apply absolute inset-0;
 }
 
 /* ── 通用进度条 ── */
@@ -456,7 +519,7 @@ function mateState(m: HudSquadMember): string {
 
 /* ── 样本 ── */
 .game-hud__sample {
-  @apply absolute top-3 right-4 flex items-center gap-2 rounded-md border border-sky-400/70 bg-sky-950/60 px-3 py-1.5 text-sm font-semibold text-sky-200;
+  @apply font-hud absolute top-[22.6rem] right-4 flex items-center gap-2 rounded-md border border-sky-400/70 bg-sky-950/60 px-3 py-1.5 text-sm font-semibold text-sky-200;
 }
 
 .game-hud__sample-orb {

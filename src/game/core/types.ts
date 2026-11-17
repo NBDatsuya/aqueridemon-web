@@ -38,6 +38,8 @@ export type BossZone = 'body' | 'tentacle' | 'headCore' | 'backCore'
 export type BossWeakWindow = 'none' | 'head' | 'back'
 export type HeliState = 'absent' | 'approaching' | 'hovering' | 'descending' | 'landed' | 'departing' | 'departed'
 export type SpawnSide = 'north' | 'east' | 'south' | 'west'
+/** 结尾评级档位：青铜 / 白银 / 黄金 / 水晶 */
+export type RankKey = 'bronze' | 'silver' | 'gold' | 'crystal'
 export type TextureKind = 'grass' | 'concrete' | 'metal' | 'rust' | 'skin' | 'blood' | 'cloth' | 'wood' | 'asphalt'
 
 /* ── 数据定义（数值在 config.ts） ── */
@@ -156,6 +158,17 @@ export interface SpawnPoint {
   z: number
 }
 
+/** 结尾评级的一个档位（数值在 config.SCORE） */
+export interface ScoreRankDef {
+  key: RankKey
+  /** 中文档位名 */
+  label: string
+  /** HUD / 结算面板用 CSS 颜色 */
+  color: string
+  /** 达到该小队总分即获得此评级 */
+  min: number
+}
+
 /* ── 战斗单位 ── */
 
 /** 四人小队成员（主控或 AI 队友）。实现见 core/combatant.ts 的 CombatantBase。 */
@@ -186,6 +199,8 @@ export interface Combatant {
   readonly weapon: WeaponState | undefined
   /** 正在救援自己的人（避免多人同时救同一人） */
   rescuer: CharacterId | null
+  /** 个人累计得分：击杀奖励与子弹命中随机分之和 */
+  score: number
   /** 每次受伤 +1。读条开始时记下该值，变化即表示被打断 */
   damageSerial: number
   /** 受到伤害。非 alive、无敌或 amount<=0 时无效，返回是否生效。HP 归零自动倒地 */

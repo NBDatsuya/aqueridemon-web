@@ -39,6 +39,8 @@ export interface HudSquadMember {
   weapon: string
   /** 弹药是否不足 25% */
   ammoLow: boolean
+  /** 个人累计得分（右上角排名用） */
+  score: number
 }
 
 /** 准星指向的队友信息 */
@@ -78,6 +80,8 @@ export interface HudEndingMember {
   isPlayer: boolean
   /** 是否登机生还 */
   survived: boolean
+  /** 个人累计得分 */
+  score: number
 }
 
 /** BE 的原因：主控阵亡 / 直升机被毁 */
@@ -96,6 +100,12 @@ export interface HudEnding {
   headshots: number
   squad: HudEndingMember[]
   hasSample: boolean
+  /** 全队个人分数之和（撤离加成前） */
+  baseScore: number
+  /** 直升机撤离血量加成 */
+  heliBonus: number
+  /** 小队最终总分 = baseScore + heliBonus，结尾评级按此分档 */
+  finalScore: number
   /** BE 时仍存活队友的喊话 */
   lastWords: { speaker: string; text: string }[]
 }
@@ -195,6 +205,7 @@ function initialSquad(): HudSquadMember[] {
       downedTimer: 0,
       weapon: '',
       ammoLow: false,
+      score: 0,
     }
   })
 }

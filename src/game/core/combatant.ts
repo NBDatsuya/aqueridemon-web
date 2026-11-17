@@ -47,6 +47,7 @@ export class CombatantBase implements Combatant {
   currentWeapon = 0
   rescuer: CharacterId | null = null
   damageSerial = 0
+  score = 0
 
   private readonly events: GameEvents
 

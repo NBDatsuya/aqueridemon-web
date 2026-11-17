@@ -17,6 +17,7 @@ import {
   HQ_LINES,
   MAX_DELTA_TIME,
   PREP_DURATION,
+  SCORE,
   VOICE,
   WAVES,
   WEAPONS,
@@ -329,6 +330,11 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     input.exitLock()
 
     const total = stats.kills.common + stats.kills.runner + stats.kills.tank
+    // 撤离结算：直升机血量决定小队最终分数（未降落 / 被毁则无加成）
+    const baseScore = ctx.combatants.reduce((sum, c) => sum + c.score, 0)
+    const heliLanded = evac.heliState === 'landed' || evac.heliState === 'departing' || evac.heliState === 'departed'
+    const heliRatio = heliLanded ? Math.max(0, evac.hp) / evac.maxHp : 0
+    const heliBonus = Math.round(baseScore * SCORE.heliBonusRate * heliRatio)
     const ending: HudEnding = {
       kind,
       reason,
@@ -342,8 +348,12 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
         name: c.name,
         isPlayer: c.isPlayer,
         survived: c.status === 'boarded',
+        score: c.score,
       })),
       hasSample: player.actor.hasSample && player.actor.status === 'boarded',
+      baseScore,
+      heliBonus,
+      finalScore: baseScore + heliBonus,
       lastWords:
         kind === 'BE'
           ? teammates.actors
@@ -362,6 +372,11 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
 
   const unsubscribe = [
     events.on('shotFired', ({ shooter, hit }) => {
+      // 每一发造成丧尸 / Boss 伤害的子弹记录 30–60 随机分
+      if (hit) {
+        const who = ctx.combatants[shooter]
+        if (who) who.score += ctx.rng.int(SCORE.perHit.min, SCORE.perHit.max)
+      }
       if (shooter !== PLAYER_ID) return
       stats.shotsFired += 1
       if (hit) stats.shotsHit += 1
@@ -381,6 +396,10 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     events.on('enemyKilled', ({ type, attacker, headshot }) => {
       stats.kills[type] += 1
       if (attacker === PLAYER_ID && headshot) stats.headshots += 1
+      // 击杀奖励与子弹命中分开计算：爆头击杀 500，其余 200；直升机机枪（attacker null）不计
+      if (attacker === null) return
+      const who = ctx.combatants[attacker]
+      if (who) who.score += headshot ? SCORE.precisionKill : SCORE.zombieKill
     }),
     events.on('waveStarted', ({ wave, total }) => {
       audio.play('wave_start')
@@ -596,6 +615,7 @@ export async function createEngine(options: EngineOptions, onProgress: ProgressC
     m.downedTimer = Math.ceil(c.downedTimer)
     m.weapon = c.weapon ? WEAPONS[c.weapon.id].name : ''
     m.ammoLow = c.weapon ? ammoRatio(c.weapon) < AMMO_LOW_RATIO : false
+    m.score = c.score
   }
 
   /* ── 准星指向队友 ── */
