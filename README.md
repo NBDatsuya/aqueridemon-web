@@ -64,4 +64,4 @@ Vue 3（`<script setup>` + TypeScript）、TresJS / Three.js 渲染、Tailwind C
 
 ## 许可
 
-[MIT](LICENSE)
+本仓库原创内容以 [MIT](LICENSE) 发布；其中来自 [Momako](https://github.com/momakoding/momako) 脚手架的框架代码沿用其原始 MIT 许可（Copyright (c) 2026 Momakoding Team），全文见 [LICENSE](LICENSE) 末尾的第三方声明。
